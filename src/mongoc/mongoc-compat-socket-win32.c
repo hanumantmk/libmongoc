@@ -18,12 +18,15 @@
 
 #ifdef _WIN32
 
+#define HIGH_BIT (1 << 30)
+
 #define STACK_STRUCT_SIZE 10
 
 #define MONGOC_WIN32_SOCKET_ONLY_WRAPPER(_fun, ...) \
    { \
       int r; \
-      if (mfd.is_socket) { \
+      SOCKET sock = _mongoc_fd_parse_socket(mfd); \
+      if (sock != INVALID_SOCKET) { \
          r = _fun (__VA_ARGS__); \
          if (r == SOCKET_ERROR) { \
             _mongoc_win32_map_wsagetlasterror (); \
@@ -80,29 +83,43 @@ mongoc_fd_t
 mongoc_open (const char *filename,
              int         flags)
 {
-   mongoc_fd_t mfd;
+   int fd;
    errno_t err;
 
-   mfd.is_socket = false;
-
-   err = _sopen_s (&mfd.u.fd, filename, flags | _O_BINARY, _SH_DENYNO,
+   err = _sopen_s (&fd, filename, flags | _O_BINARY, _SH_DENYNO,
                    _S_IREAD | _S_IWRITE);
 
    if (err) {
-      return MONGOC_FD_INVALID;
+      return -1;
    }
 
-   return mfd;
+   return fd;
+}
+
+static int
+_mongoc_fd_parse_fd(mongoc_fd_t mfd)
+{
+   if (mfd >= 0 && mfd < HIGH_BIT) {
+      return mfd;
+   } else {
+      return -1;
+   }
+}
+
+static SOCKET
+_mongoc_fd_parse_socket(mongoc_fd_t mfd)
+{
+   if (mfd >= HIGH_BIT) {
+      return mfd - HIGH_BIT;
+   } else {
+      return INVALID_SOCKET;
+   }
 }
 
 bool
 mongoc_fd_is_valid (mongoc_fd_t mfd)
 {
-   if (mfd.is_socket) {
-      return mfd.u.socket != INVALID_SOCKET;
-   } else {
-      return mfd.u.fd != -1;
-   }
+   return mfd >= 0;
 }
 
 ssize_t
@@ -111,9 +128,10 @@ mongoc_read (mongoc_fd_t mfd,
              size_t      count)
 {
    int r;
+   SOCKET sock = _mongoc_fd_parse_socket(mfd);
 
-   if (mfd.is_socket) {
-      r = recv (mfd.u.socket, buf, (int)count, 0);
+   if (sock != INVALID_SOCKET) {
+      r = recv (sock, buf, (int)count, 0);
 
       if (r == SOCKET_ERROR) {
          _mongoc_win32_map_wsagetlasterror ();
@@ -122,7 +140,7 @@ mongoc_read (mongoc_fd_t mfd,
          return r;
       }
    } else {
-      return (ssize_t)_read (mfd.u.fd, buf, (int)count);
+      return (ssize_t)_read (_mongoc_fd_parse_fd(mfd), buf, (int)count);
    }
 }
 
@@ -132,9 +150,10 @@ mongoc_write (mongoc_fd_t mfd,
               size_t      count)
 {
    int r;
+   SOCKET sock = _mongoc_fd_parse_socket(mfd);
 
-   if (mfd.is_socket) {
-      r = send (mfd.u.socket, buf, (int)count, 0);
+   if (sock != INVALID_SOCKET) {
+      r = send (sock, buf, (int)count, 0);
 
       if (r == SOCKET_ERROR) {
          _mongoc_win32_map_wsagetlasterror ();
@@ -143,7 +162,7 @@ mongoc_write (mongoc_fd_t mfd,
          return r;
       }
    } else {
-      return (ssize_t)_write (mfd.u.fd, buf, (int)count);
+      return (ssize_t)_write (_mongoc_fd_parse_fd(mfd), buf, (int)count);
    }
 }
 
@@ -153,7 +172,7 @@ mongoc_getsockopt (mongoc_fd_t mfd,
                    int         optname,
                    void       *optval,
                    socklen_t  *optlen)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (getsockopt, mfd.u.socket, level, optname,
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (getsockopt, sock, level, optname,
                                   (char *)optval, optlen)
 
 int
@@ -162,7 +181,7 @@ mongoc_setsockopt (mongoc_fd_t mfd,
                    int         optname,
                    void       *optval,
                    socklen_t   optlen)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (setsockopt, mfd.u.socket, level, optname,
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (setsockopt, sock, level, optname,
                                   (char *)optval, optlen)
 
 ssize_t
@@ -175,8 +194,10 @@ mongoc_writev (mongoc_fd_t   mfd,
    size_t buf_len = 0;
    ssize_t out;
 
+   bool is_socket = _mongoc_fd_parse_socket(mfd) != INVALID_SOCKET;
+
    /* If we've got a socket, just head to sendmsg */
-   if (mfd.is_socket) {
+   if (is_socket) {
       mongoc_msghdr_t msghdr = { 0 };
       msghdr.msg_iov = iov;
       msghdr.msg_iovlen = iovcnt;
@@ -219,8 +240,10 @@ mongoc_readv (mongoc_fd_t   mfd,
    size_t buf_len = 0, bytes_remaining;
    ssize_t total;
 
+   bool is_socket = _mongoc_fd_parse_socket(mfd) != INVALID_SOCKET;
+
    /* If we've got a socket, just head to sendmsg */
-   if (mfd.is_socket) {
+   if (is_socket) {
       mongoc_msghdr_t msghdr = { 0 };
       msghdr.msg_iov = iov;
       msghdr.msg_iovlen = iovcnt;
@@ -266,12 +289,14 @@ mongoc_lseek (mongoc_fd_t mfd,
               off_t       offset,
               int         whence)
 {
-   if (mfd.is_socket) {
+   int fd = _mongoc_fd_parse_fd(mfd);
+
+   if (fd < 0) {
       errno = ESPIPE;
       return -1;
    }
 
-   return _lseek (mfd.u.fd, (long)offset, whence);
+   return _lseek (fd, (long)offset, whence);
 }
 
 mongoc_fd_t
@@ -279,26 +304,25 @@ mongoc_socket (int domain,
                int type,
                int protocol)
 {
-   mongoc_fd_t mfd;
+   SOCKET sock;
 
-   mfd.is_socket = true;
-   mfd.u.socket = WSASocket (domain, type, protocol, NULL, 0,
-                             WSA_FLAG_OVERLAPPED);
+   sock = WSASocket (domain, type, protocol, NULL, 0,
+                     WSA_FLAG_OVERLAPPED);
 
-   if (mfd.u.socket == INVALID_SOCKET) {
+   if (sock == INVALID_SOCKET) {
       _mongoc_win32_map_wsagetlasterror ();
-      return mfd;
+      return -1;
    }
 
-   return mfd;
+   return HIGH_BIT + sock;
 }
 
 int
 mongoc_connect (mongoc_fd_t            mfd,
                 const struct sockaddr *addr,
                 socklen_t              addrlen)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (WSAConnect, mfd.u.socket, addr, addrlen, NULL,
-                                  NULL, NULL, NULL)
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (WSAConnect, sock, addr, addrlen, NULL, NULL,
+                                  NULL, NULL)
 
 int
 mongoc_poll (mongoc_pollfd_t *fds,
@@ -308,6 +332,7 @@ mongoc_poll (mongoc_pollfd_t *fds,
    int i, j, r;
    WSAPOLLFD small_wsafds[STACK_STRUCT_SIZE];
    WSAPOLLFD *wsafds;
+   SOCKET sock;
 
    if (nfds > STACK_STRUCT_SIZE) {
       wsafds = malloc (sizeof (*wsafds) * nfds);
@@ -317,9 +342,11 @@ mongoc_poll (mongoc_pollfd_t *fds,
 
    /* pull together an appropriate poll struct for WSAPoll */
    for (i = 0, j = 0; i < nfds; i++) {
-      if (fds[i].fd.is_socket) {
+      sock = _mongoc_fd_parse_socket(fds[i].fd);
+
+      if (sock != INVALID_SOCKET) {
          /* only include sockets.  fd's aren't valid */
-         wsafds[j].fd = fds[i].fd.u.socket;
+         wsafds[j].fd = sock;
          wsafds[j].events = fds[i].events;
          wsafds[j].revents = fds[i].revents;
          j++;
@@ -335,7 +362,7 @@ mongoc_poll (mongoc_pollfd_t *fds,
    /* if we didn't error */
    if (r >= 0) {
       for (i = 0; i < nfds; i++) {
-         if (fds[i].fd.is_socket) {
+         if (_mongoc_fd_parse_socket(fds[i].fd) != INVALID_SOCKET) {
             /* sockets get real events */
             fds[i].revents = wsafds[j].revents;
             j++;
@@ -368,20 +395,22 @@ mongoc_poll (mongoc_pollfd_t *fds,
 int
 mongoc_close (mongoc_fd_t mfd)
 {
-   if (mfd.is_socket) {
-      if (shutdown (mfd.u.socket, SD_BOTH) == SOCKET_ERROR) {
+   SOCKET sock = _mongoc_fd_parse_socket(mfd);
+
+   if (sock != INVALID_SOCKET) {
+      if (shutdown (sock, SD_BOTH) == SOCKET_ERROR) {
          _mongoc_win32_map_wsagetlasterror ();
          return -1;
       }
 
-      if (closesocket (mfd.u.socket) == SOCKET_ERROR) {
+      if (closesocket (sock) == SOCKET_ERROR) {
          _mongoc_win32_map_wsagetlasterror ();
          return -1;
       }
 
       return 0;
    } else {
-      return _close (mfd.u.fd);
+      return _close (_mongoc_fd_parse_fd(mfd));
    }
 }
 
@@ -399,7 +428,9 @@ mongoc_recvmsg (mongoc_fd_t      mfd,
    DWORD bytes_received;
    DWORD wsa_flags = 0;
 
-   if (!mfd.is_socket) {
+   SOCKET sock = _mongoc_fd_parse_socket(mfd);
+
+   if (sock == INVALID_SOCKET) {
       errno = ENOTSOCK;
       return -1;
    }
@@ -417,7 +448,7 @@ mongoc_recvmsg (mongoc_fd_t      mfd,
 
    dwBufferCount = (ULONG)msg->msg_iovlen;
 
-   r = WSARecv (mfd.u.socket, lpBuffers, dwBufferCount, &bytes_received,
+   r = WSARecv (sock, lpBuffers, dwBufferCount, &bytes_received,
                 &wsa_flags, NULL, NULL);
 
    if (msg->msg_iovlen > STACK_STRUCT_SIZE) {
@@ -446,7 +477,9 @@ mongoc_sendmsg (mongoc_fd_t      mfd,
    DWORD dwBufferCount;
    DWORD bytes_sent;
 
-   if (!mfd.is_socket) {
+   SOCKET sock = _mongoc_fd_parse_socket(mfd);
+
+   if (sock == INVALID_SOCKET) {
       errno = ENOTSOCK;
       return -1;
    }
@@ -464,7 +497,7 @@ mongoc_sendmsg (mongoc_fd_t      mfd,
 
    dwBufferCount = (ULONG)msg->msg_iovlen;
 
-   r = WSASend (mfd.u.socket, lpBuffers, dwBufferCount, &bytes_sent, 0,
+   r = WSASend (sock, lpBuffers, dwBufferCount, &bytes_sent, 0,
                 NULL, NULL);
 
    if (msg->msg_iovlen > STACK_STRUCT_SIZE) {
@@ -485,29 +518,28 @@ mongoc_accept (mongoc_fd_t      mfd,
                struct sockaddr *addr,
                socklen_t       *addrlen)
 {
-   mongoc_fd_t out;
+   SOCKET out;
 
-   out.is_socket = true;
+   out = accept (_mongoc_fd_parse_socket(mfd), addr, addrlen);
 
-   out.u.socket = accept (mfd.u.socket, addr, addrlen);
-
-   if (out.u.socket == INVALID_SOCKET) {
+   if (out == INVALID_SOCKET) {
       _mongoc_win32_map_wsagetlasterror ();
+      return -1;
    }
 
-   return out;
+   return HIGH_BIT + out;
 }
 
 int
 mongoc_bind (mongoc_fd_t            mfd,
              const struct sockaddr *addr,
              socklen_t              addrlen)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (bind, mfd.u.socket, addr, addrlen)
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (bind, sock, addr, addrlen)
 
 int
 mongoc_listen (mongoc_fd_t mfd,
                int         backlog)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (listen, mfd.u.socket, backlog)
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (listen, sock, backlog)
 
 int
 mongoc_fd_set_nonblock (mongoc_fd_t fd)
@@ -519,18 +551,20 @@ int
 mongoc_getsockname (mongoc_fd_t      mfd,
                     struct sockaddr *name,
                     int             *namelen)
-MONGOC_WIN32_SOCKET_ONLY_WRAPPER (getsockname, mfd.u.socket, name, namelen)
+MONGOC_WIN32_SOCKET_ONLY_WRAPPER (getsockname, sock, name, namelen)
 
 int
 mongoc_fstat (mongoc_fd_t  mfd,
               struct stat *buf)
 {
-   if (mfd.is_socket) {
+   int fd = _mongoc_fd_parse_fd(mfd);
+
+   if (fd < 0) {
       errno = ESPIPE;
       return -1;
    }
 
-   return fstat (mfd.u.fd, buf);
+   return fstat (fd, buf);
 }
 
 #endif

@@ -43,14 +43,7 @@ typedef struct
    int           msg_flags;
 } mongoc_msghdr_t;
 
-typedef struct
-{
-   union {
-      int    fd;
-      SOCKET socket;
-   }    u;
-   bool is_socket;
-} mongoc_fd_t;
+typedef int mongoc_fd_t;
 
 typedef struct
 {
@@ -59,8 +52,8 @@ typedef struct
    short       revents;
 } mongoc_pollfd_t;
 
-static const mongoc_fd_t MONGOC_STDIN_FILENO = { { 0 }, false };
-static const mongoc_fd_t MONGOC_FD_INVALID = { { -1 }, false };
+static const mongoc_fd_t MONGOC_STDIN_FILENO = 0;
+static const mongoc_fd_t MONGOC_FD_INVALID = -1;
 
 mongoc_fd_t
 mongoc_open (const char *filename,
