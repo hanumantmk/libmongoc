@@ -42,5 +42,6 @@ Documentation:
   Install man pages                                : ${mongoc_install_man}
 
 Bindings:
+  CXX (experimental)                               : ${ax_cxx_header}
   Python (experimental)                            : ${ax_python_header}
 "
