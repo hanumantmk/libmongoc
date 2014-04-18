@@ -164,6 +164,7 @@ _mongoc_proxy_bind_tcp (const mongoc_host_list_t *host,
    struct addrinfo *result, *rp;
    char portstr [8];
    int s;
+   int on = 1;
 
    ENTRY;
 
@@ -179,7 +180,10 @@ _mongoc_proxy_bind_tcp (const mongoc_host_list_t *host,
 
    s = getaddrinfo (host->host, portstr, &hints, &result);
 
+   fprintf(stderr, "binding to: %s %s\n", host->host, portstr);
+
    if (s != 0) {
+       fprintf(stderr, "Failed to resolve\n");
       bson_set_error(error,
                      MONGOC_ERROR_STREAM,
                      MONGOC_ERROR_STREAM_NAME_RESOLUTION,
@@ -199,7 +203,17 @@ _mongoc_proxy_bind_tcp (const mongoc_host_list_t *host,
       }
 
       /*
-       * Try to connect to the peer.
+       * Turn on reuseaddr
+       */
+      if (0 != mongoc_socket_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, 4)) {
+         mongoc_socket_destroy (sock);
+         sock = NULL;
+         continue;
+      }
+
+
+      /*
+       * Try to bind to the address
        */
       if (0 != mongoc_socket_bind (sock,
                                    rp->ai_addr,
@@ -209,10 +223,20 @@ _mongoc_proxy_bind_tcp (const mongoc_host_list_t *host,
          continue;
       }
 
+      /*
+       * Try to listen
+       */
+      if (0 != mongoc_socket_listen(sock, 1024)) {
+         mongoc_socket_destroy (sock);
+         sock = NULL;
+         continue;
+      }
+
       break;
    }
 
    if (!sock) {
+       fprintf(stderr, "failed to bind a socket\n");
       bson_set_error (error,
                       MONGOC_ERROR_STREAM,
                       MONGOC_ERROR_STREAM_CONNECT,
@@ -326,7 +350,7 @@ static void *
 _mongoc_proxy_conn_loop(void * _conn)
 {
     mongoc_proxy_conn_t * conn = (mongoc_proxy_conn_t *)_conn;
-    bool keep_going;
+    bool keep_going = true;
     mongoc_proxy_t * proxy = conn->proxy;
     mongoc_rpc_t rpc;
     mongoc_buffer_t buffer;
@@ -352,6 +376,7 @@ _mongoc_proxy_conn_loop(void * _conn)
             switch (rpc.header.opcode) {
                 case MONGOC_OPCODE_QUERY: {
                     _mongoc_array_append_bson(&bsons, rpc.query.query);
+                    if (rpc.query.fields)
                     _mongoc_array_append_bson(&bsons, rpc.query.fields);
                     cursor = proxy->handler.op_query (
                        proxy,
@@ -359,7 +384,7 @@ _mongoc_proxy_conn_loop(void * _conn)
                        rpc.query.flags, rpc.query.collection,
                        rpc.query.skip, rpc.query.n_return,
                        &_mongoc_array_index (&bsons, bson_t, 0),
-                       &_mongoc_array_index (&bsons, bson_t, 1)
+                       rpc.query.fields ? &_mongoc_array_index (&bsons, bson_t, 1) : NULL
                     );
 
                     _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.query.n_return, rpc.query.request_id);
@@ -410,6 +435,7 @@ _mongoc_proxy_loop(void * _proxy)
         socket = mongoc_socket_accept(proxy->socket, proxy->sockettimeoutms);
 
         if (socket) {
+            fprintf(stderr, "accepted a socket\n");
             conn = _mongoc_proxy_conn_new(proxy, socket);
 
             mongoc_mutex_lock(&proxy->mutex);
@@ -441,6 +467,7 @@ mongoc_proxy_new (const char                   *uri_string,
     memcpy(&proxy->handler, handler, sizeof *handler);
     proxy->data = data;
     proxy->socket = _mongoc_proxy_bind_tcp(host, error);
+    proxy->sockettimeoutms = 5000;
     proxy->keep_going = true;
 
     mongoc_uri_destroy(uri);
@@ -453,6 +480,7 @@ mongoc_proxy_new (const char                   *uri_string,
 void
 mongoc_proxy_destroy (mongoc_proxy_t *proxy)
 {
+    mongoc_thread_join(proxy->thread);
     bson_free(proxy);
 }
 

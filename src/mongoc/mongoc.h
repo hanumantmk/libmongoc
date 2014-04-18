@@ -40,6 +40,7 @@
 #include "mongoc-init.h"
 #include "mongoc-matcher.h"
 #include "mongoc-opcode.h"
+#include "mongoc-proxy.h"
 #include "mongoc-log.h"
 #include "mongoc-socket.h"
 #include "mongoc-stream.h"

@@ -45,3 +45,8 @@ noinst_PROGRAMS += find-and-modify
 find_and_modify_SOURCES = examples/find-and-modify.c
 find_and_modify_CFLAGS = $(EXAMPLE_CFLAGS)
 find_and_modify_LDADD = $(EXAMPLE_LDADD)
+
+noinst_PROGRAMS += mongoc-proxy
+mongoc_proxy_SOURCES = examples/mongoc-proxy.c
+mongoc_proxy_CFLAGS = $(EXAMPLE_CFLAGS)
+mongoc_proxy_LDADD = $(EXAMPLE_LDADD)
