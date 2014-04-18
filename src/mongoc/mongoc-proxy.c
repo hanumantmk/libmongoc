@@ -30,11 +30,11 @@ _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
 
    ENTRY;
 
+   proxy = conn->proxy;
+
    bson_return_val_if_fail (proxy, false);
    bson_return_val_if_fail (rpc, false);
    bson_return_val_if_fail (buffer, false);
-
-   proxy = conn->proxy;
 
    /*
     * Buffer the message length to determine how much more to read.
@@ -258,25 +258,27 @@ _mongoc_proxy_conn_new (mongoc_proxy_t  *proxy,
 
     conn->proxy = proxy;
     conn->stream = mongoc_stream_socket_new (socket);
+    _mongoc_array_init(&conn->iov, sizeof(struct iovec));
 
     return conn;
 }
 
 static bool
-_mongoc_array_append_bson(mongoc_array_t * array, const uint8_t * bson)
+_mongoc_proxy_extract_bson(bson_t * bson, const uint8_t * buf)
 {
-    bson_t buf;
     bool r;
 
     uint32_t len;
 
-    memcpy(&len, bson, 4);
+    memcpy(&len, buf, 4);
     len = BSON_UINT32_FROM_LE(len);
 
-    r = bson_init_static(&buf, bson, len);
+    r = bson_init_static(bson, buf, len);
 
-    if (r) {
-        _mongoc_array_append_val(array, buf);
+    {
+        char * ugh = bson_as_json(bson, NULL);
+        fprintf(stderr, "got: %s\n", ugh);
+        free(ugh);
     }
 
     return r;
@@ -292,8 +294,8 @@ _mongoc_proxy_conn_cursor_send (mongoc_proxy_conn_t   *conn,
     mongoc_proxy_t * proxy;
     int32_t req_id;
     bson_writer_t * writer;
-    uint8_t * buf;
-    size_t buflen;
+    uint8_t * buf = NULL;
+    size_t buflen = 0;
     int32_t to_send;
     int32_t sent = 0;
     bool more = false;
@@ -317,7 +319,7 @@ _mongoc_proxy_conn_cursor_send (mongoc_proxy_conn_t   *conn,
 
     while (to_send) {
         bson_writer_begin(writer, &bson);
-        more = cursor->handler.yield(proxy->data, bson);
+        more = cursor->handler.yield(cursor->data, bson);
 
         if (more) {
             sent++;
@@ -346,6 +348,27 @@ _mongoc_proxy_conn_cursor_send (mongoc_proxy_conn_t   *conn,
     bson_free(buf);
 }
 
+static mongoc_proxy_cursor_t *
+_mongoc_proxy_handle_cmd (mongoc_proxy_t *proxy,
+                          const bson_t   *bson,
+                          mongoc_rpc_t   *rpc)
+{
+    mongoc_proxy_cursor_t * cursor;
+    bson_iter_t iter;
+    const char * cmd;
+
+    bson_iter_init(&iter, bson);
+    bson_iter_next(&iter);
+
+    cmd = bson_iter_key(&iter);
+
+    /* figure this out */
+
+
+
+    return cursor;
+}
+
 static void *
 _mongoc_proxy_conn_loop(void * _conn)
 {
@@ -356,11 +379,10 @@ _mongoc_proxy_conn_loop(void * _conn)
     mongoc_buffer_t buffer;
     bson_error_t error;
     mongoc_proxy_cursor_t * cursor;
-    mongoc_array_t bsons;
+    bson_t bsons[2];
     bool r;
 
     _mongoc_buffer_init(&buffer, NULL, 0, bson_realloc_ctx);
-    _mongoc_array_init(&bsons, sizeof(bson_t));
 
     while (keep_going) {
         mongoc_mutex_lock(&proxy->mutex);
@@ -375,17 +397,22 @@ _mongoc_proxy_conn_loop(void * _conn)
         if (r) {
             switch (rpc.header.opcode) {
                 case MONGOC_OPCODE_QUERY: {
-                    _mongoc_array_append_bson(&bsons, rpc.query.query);
+                    _mongoc_proxy_extract_bson(bsons, rpc.query.query);
                     if (rpc.query.fields)
-                    _mongoc_array_append_bson(&bsons, rpc.query.fields);
-                    cursor = proxy->handler.op_query (
-                       proxy,
-                       proxy->data,
-                       rpc.query.flags, rpc.query.collection,
-                       rpc.query.skip, rpc.query.n_return,
-                       &_mongoc_array_index (&bsons, bson_t, 0),
-                       rpc.query.fields ? &_mongoc_array_index (&bsons, bson_t, 1) : NULL
-                    );
+                    _mongoc_proxy_extract_bson(bsons + 1, rpc.query.fields);
+
+                    if (strcmp(strchr(rpc.query.collection, '.'), "$cmd") == 0) {
+                        cursor = _mongoc_proxy_handle_cmd(proxy, bsons, &rpc);
+                    } else {
+                        cursor = proxy->handler.op_query (
+                           proxy,
+                           proxy->data,
+                           rpc.query.flags, rpc.query.collection,
+                           rpc.query.skip, rpc.query.n_return,
+                           bsons,
+                           bsons + 1
+                        );
+                    }
 
                     _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.query.n_return, rpc.query.request_id);
                     break;
@@ -410,8 +437,6 @@ _mongoc_proxy_conn_loop(void * _conn)
         } else {
             break;
         }
-
-        _mongoc_array_clear(&bsons);
     }
     return NULL;
 }

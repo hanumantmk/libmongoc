@@ -16,7 +16,7 @@ query_handler (mongoc_proxy_t *proxy,
     mongoc_proxy_cursor_t * cursor = mongoc_proxy_cursor_new_from_bson(proxy, bson);
 
     char * str = bson_as_json(query, NULL);
-    fprintf(stderr, "BSON: %s\n", str);
+    fprintf(stderr, "BSON: %s, ns: %s\n", str, ns);
     free(str);
 
     bson_free(bson);
