@@ -34,6 +34,8 @@ struct mongoc_proxy_cursor
 {
    void   *data;
    int64_t id;
+   int32_t pos;
+   mongoc_mutex_t mutex;
 
    mongoc_proxy_cursor_handler_t handler;
 
@@ -60,6 +62,7 @@ struct mongoc_proxy
    int32_t          max_msg_size;
    mongoc_mutex_t   mutex;
    int64_t          cursor_id_seq;
+   int32_t          request_id_seq;
    mongoc_thread_t  thread;
    bool             keep_going;
 

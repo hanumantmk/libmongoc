@@ -23,6 +23,7 @@ INST_H_FILES = \
 	src/mongoc/mongoc-log.h \
 	src/mongoc/mongoc-matcher.h \
 	src/mongoc/mongoc-opcode.h \
+	src/mongoc/mongoc-proxy.h \
 	src/mongoc/mongoc-read-prefs.h \
 	src/mongoc/mongoc-socket.h \
 	src/mongoc/mongoc-stream.h \
@@ -61,6 +62,7 @@ NOINST_H_FILES = \
 	src/mongoc/mongoc-list-private.h \
 	src/mongoc/mongoc-matcher-op-private.h \
 	src/mongoc/mongoc-matcher-private.h \
+	src/mongoc/mongoc-proxy-private.h \
 	src/mongoc/mongoc-queue-private.h \
 	src/mongoc/mongoc-read-prefs-private.h \
 	src/mongoc/mongoc-rpc-private.h \
@@ -98,6 +100,7 @@ libmongoc_priv_la_SOURCES = \
 	src/mongoc/mongoc-log.c \
 	src/mongoc/mongoc-matcher-op.c \
 	src/mongoc/mongoc-matcher.c \
+	src/mongoc/mongoc-proxy.c \
 	src/mongoc/mongoc-queue.c \
 	src/mongoc/mongoc-read-prefs.c \
 	src/mongoc/mongoc-rpc.c \

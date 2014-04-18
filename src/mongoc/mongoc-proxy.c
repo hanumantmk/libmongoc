@@ -1,5 +1,8 @@
 #include "mongoc-proxy-private.h"
 
+#include "uthash.h"
+#include "utlist.h"
+
 #include "mongoc-uri.h"
 #include "mongoc-rpc-private.h"
 #include "mongoc-buffer-private.h"
@@ -7,6 +10,7 @@
 #include "mongoc-opcode.h"
 #include "mongoc-socket.h"
 #include "mongoc-error.h"
+#include "mongoc-flags.h"
 #include "mongoc-trace.h"
 #include "mongoc-stream-private.h"
 #include "mongoc-stream-socket.h"
@@ -254,6 +258,70 @@ _mongoc_array_append_bson(mongoc_array_t * array, const uint8_t * bson)
     return r;
 }
 
+static void
+_mongoc_proxy_conn_cursor_send (mongoc_proxy_conn_t   *conn,
+                                mongoc_proxy_cursor_t *cursor,
+                                int32_t                n_return,
+                                int32_t                response_to)
+{
+    mongoc_rpc_t rpc;
+    mongoc_proxy_t * proxy;
+    int32_t req_id;
+    bson_writer_t * writer;
+    uint8_t * buf;
+    size_t buflen;
+    int32_t to_send;
+    int32_t sent = 0;
+    bool more = false;
+    bson_t * bson;
+
+    writer = bson_writer_new(&buf, &buflen, 0, bson_realloc_ctx, NULL);
+
+    proxy = conn->proxy;
+
+    mongoc_mutex_lock(&proxy->mutex);
+    req_id = proxy->request_id_seq++;
+    mongoc_mutex_unlock(&proxy->mutex);
+
+    rpc.reply.opcode = MONGOC_OPCODE_REPLY;
+    rpc.reply.flags = MONGOC_REPLY_AWAIT_CAPABLE;
+    rpc.reply.request_id = req_id;
+    rpc.reply.response_to = response_to;
+    rpc.reply.start_from = cursor->pos;
+
+    to_send = n_return > 0 ? n_return : n_return * -1;
+
+    while (to_send) {
+        bson_writer_begin(writer, &bson);
+        more = cursor->handler.yield(proxy->data, bson);
+
+        if (more) {
+            sent++;
+        } else {
+            break;
+        }
+
+        to_send--;
+
+        bson_writer_end(writer);
+    }
+
+    if (more || n_return < 0) {
+        rpc.reply.cursor_id = 0;
+    } else {
+        rpc.reply.cursor_id = cursor->id;
+    }
+
+    rpc.reply.documents = buf;
+    rpc.reply.documents_len = bson_writer_get_length(writer);
+    rpc.reply.n_returned = sent;
+
+    _mongoc_proxy_conn_sendv(conn, &rpc, 1, NULL);
+
+    bson_writer_destroy(writer);
+    bson_free(buf);
+}
+
 static void *
 _mongoc_proxy_conn_loop(void * _conn)
 {
@@ -294,16 +362,31 @@ _mongoc_proxy_conn_loop(void * _conn)
                        &_mongoc_array_index (&bsons, bson_t, 1)
                     );
 
-                    _mongoc_proxy_cursor_send(cursor);
+                    _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.query.n_return, rpc.query.request_id);
+                    break;
                 }
 
-                case MONGOC_OPCODE_GET_MORE:
+                case MONGOC_OPCODE_GET_MORE: {
+                    mongoc_mutex_lock(&proxy->mutex);
+                    HASH_FIND(hh, proxy->cursors, &rpc.get_more.cursor_id, 8, cursor);
+                    mongoc_mutex_unlock(&proxy->mutex);
+
+                    if (cursor) {
+                        mongoc_mutex_lock(&cursor->mutex);
+                        _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.get_more.n_return, rpc.get_more.request_id);
+                        mongoc_mutex_unlock(&cursor->mutex);
+                    }
+                    break;
+                }
+
                 default:
                     keep_going = false;
             }
         } else {
             break;
         }
+
+        _mongoc_array_clear(&bsons);
     }
     return NULL;
 }
@@ -352,10 +435,13 @@ mongoc_proxy_new (const char                   *uri_string,
     const mongoc_host_list_t *host = mongoc_uri_get_hosts(uri);
 
     mongoc_proxy_t * proxy = bson_malloc0(sizeof *proxy);
-
+    mongoc_mutex_init(&proxy->mutex);
+    proxy->max_bson_size = 1 << 24;
+    proxy->max_msg_size = 1 << 24;
     memcpy(&proxy->handler, handler, sizeof *handler);
     proxy->data = data;
     proxy->socket = _mongoc_proxy_bind_tcp(host, error);
+    proxy->keep_going = true;
 
     mongoc_uri_destroy(uri);
 
@@ -377,16 +463,47 @@ mongoc_proxy_cursor_new (mongoc_proxy_t                      *proxy,
 {
     mongoc_proxy_cursor_t * cursor = bson_malloc0(sizeof *cursor);
 
+    mongoc_mutex_init(&cursor->mutex);
+
+    cursor->pos = 0;
+    memcpy(&cursor->handler, handler, sizeof(*handler));
+    cursor->data = data;
+
+    mongoc_mutex_lock(&proxy->mutex);
+    cursor->id = proxy->cursor_id_seq++;
+    HASH_ADD_KEYPTR(hh, proxy->cursors, &cursor->id, 8, cursor);
+    mongoc_mutex_unlock(&proxy->mutex);
+
     return cursor;
+}
+
+static void
+_mongoc_proxy_cursor_new_from_bson_destroy (void   *_bson)
+{
+    bson_destroy((bson_t *)_bson);
+}
+
+static bool
+_mongoc_proxy_cursor_new_from_bson_yield (void   *_src,
+                                           bson_t *dest)
+{
+    bson_t * src = (bson_t *)_src;
+
+    bson_copy_to(src, dest);
+
+    return false;
 }
 
 mongoc_proxy_cursor_t *
 mongoc_proxy_cursor_new_from_bson (mongoc_proxy_t *proxy,
                                    const bson_t   *bson)
 {
-    mongoc_proxy_cursor_t * cursor = bson_malloc0(sizeof *cursor);
+    mongoc_proxy_cursor_handler_t handler;
 
-    return cursor;
+    handler.yield = &_mongoc_proxy_cursor_new_from_bson_yield;
+    handler.destroy = &_mongoc_proxy_cursor_new_from_bson_destroy;
+
+    return mongoc_proxy_cursor_new(proxy, (void *)bson_copy(bson), &handler);
 }
 
 
@@ -394,8 +511,6 @@ mongoc_proxy_cursor_t *
 mongoc_proxy_cursor_new_from_bson_reader (mongoc_proxy_t      *proxy,
                                           const bson_reader_t *reader)
 {
-    mongoc_proxy_cursor_t * cursor = bson_malloc0(sizeof *cursor);
-
-    return cursor;
+    return NULL;
 }
 
