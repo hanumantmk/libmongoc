@@ -21,6 +21,7 @@
 
 #include <bson.h>
 
+#include "mongoc-matcher.h"
 #include "mongoc-array-private.h"
 #include "mongoc-proxy.h"
 #include "mongoc-stream.h"
@@ -53,6 +54,11 @@ typedef struct mongoc_proxy_conn
    struct mongoc_proxy_conn *next, *prev;
 } mongoc_proxy_conn_t;
 
+typedef struct mongoc_proxy_cmd_dispatch {
+    mongoc_matcher_t * matcher;
+    mongoc_proxy_cursor_t * (* cb)(mongoc_proxy_t *, const bson_t *);
+} mongoc_proxy_cmd_dispatch_t;
+
 struct mongoc_proxy
 {
    mongoc_socket_t *socket;
@@ -66,7 +72,9 @@ struct mongoc_proxy
    mongoc_thread_t  thread;
    bool             keep_going;
 
-   mongoc_proxy_handler_t handler;
+   mongoc_proxy_handler_t       handler;
+   mongoc_proxy_cmd_dispatch_t *cmd_dispatch;
+   size_t                       n_cmd_dispatch;
 
    mongoc_proxy_conn_t   *connections;
    mongoc_proxy_cursor_t *cursors;

@@ -32,7 +32,7 @@ int main(int argc, char ** argv)
 
     handler.op_query = &query_handler;
 
-    proxy = mongoc_proxy_new("mongodb://127.0.0.1:30000", NULL, &handler, &error);
+    proxy = mongoc_proxy_new("mongodb://127.0.0.1:30000", NULL, &handler, NULL, 0, &error);
 
     mongoc_proxy_destroy(proxy);
 

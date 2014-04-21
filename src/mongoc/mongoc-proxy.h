@@ -70,11 +70,18 @@ typedef struct
    void (*destroy)(void *data);
 } mongoc_proxy_handler_t;
 
+typedef struct mongoc_proxy_cmd_handler {
+    const bson_t * match;
+    mongoc_proxy_cursor_t * (* cb)(mongoc_proxy_t *, const bson_t *);
+} mongoc_proxy_cmd_handler_t;
+
 mongoc_proxy_t *
-mongoc_proxy_new (const char                   *uri_string,
-                  void                         *data,
-                  const mongoc_proxy_handler_t *handler,
-                  bson_error_t                 *error);
+mongoc_proxy_new (const char                       *uri_string,
+                  void                             *data,
+                  const mongoc_proxy_handler_t     *handler,
+                  const mongoc_proxy_cmd_handler_t *cmd_handler,
+                  size_t                            n_cmd_handler,
+                  bson_error_t                     *error);
 
 void
 mongoc_proxy_destroy (mongoc_proxy_t *proxy);
@@ -89,8 +96,14 @@ mongoc_proxy_cursor_new_from_bson (mongoc_proxy_t *proxy,
                                    const bson_t   *bson);
 
 mongoc_proxy_cursor_t *
+mongoc_proxy_cursor_new_from_bcon (mongoc_proxy_t *proxy,
+                                   ...);
+
+mongoc_proxy_cursor_t *
 mongoc_proxy_cursor_new_from_bson_reader (mongoc_proxy_t      *proxy,
                                           const bson_reader_t *reader);
+
+#define MONGOC_PROXY_CURSOR_NEW_FROM_BCON(...) mongoc_proxy_cursor_new_from_bcon(__VA_ARGS__, NULL)
 
 BSON_END_DECLS
 
