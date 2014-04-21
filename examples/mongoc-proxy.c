@@ -31,6 +31,7 @@ magic_handler (mongoc_proxy_t *proxy, const bson_t * cmd)
     fprintf(stderr, "magic called!\n");
 
     return MONGOC_PROXY_CURSOR_NEW_FROM_BCON(proxy,
+        "ok", BCON_INT32(1),
         "rand", BCON_INT32(rand())
     );
 }
