@@ -115,16 +115,30 @@ int main(int argc, char ** argv)
 {
     mongoc_thread_t threads[2];
 
-    mongoc_thread_create(threads + 0, run_server, NULL);
+    if (argc == 2) {
+        if (strcmp(argv[1], "server") == 0) {
+            run_server(NULL);
+        } else if (strcmp(argv[1], "client") == 0) {
+            run_client(NULL);
+        } else {
+            fprintf(stderr, "%s - [client|server]\n", argv[0]);
+        }
 
-    sleep(1);
+        return 0;
+    } else if (argc == 1) {
+        mongoc_thread_create(threads + 0, run_server, NULL);
 
-    mongoc_thread_create(threads + 1, run_client, NULL);
+        sleep(1);
 
-    int i;
+        mongoc_thread_create(threads + 1, run_client, NULL);
 
-    for (i = 0; i < 2; i++) {
-        mongoc_thread_join(threads[i]);
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            mongoc_thread_join(threads[i]);
+        }
+    } else {
+        fprintf(stderr, "%s - [client|server]\n", argv[0]);
     }
 
     return 0;

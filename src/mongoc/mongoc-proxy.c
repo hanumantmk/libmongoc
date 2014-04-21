@@ -551,7 +551,7 @@ _mongoc_proxy_cmd_dispatch_new (const mongoc_proxy_cmd_handler_t *cmd_handler,
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_getLog;
     bson_destroy(match);
 
-    match = BCON_NEW("replSetGetStatus", BCON_DOUBLE(1));
+    match = BCON_NEW("replSetGetStatus", BCON_INT32(1));
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_replSetGetStatus;
     bson_destroy(match);
@@ -561,7 +561,7 @@ _mongoc_proxy_cmd_dispatch_new (const mongoc_proxy_cmd_handler_t *cmd_handler,
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_whatsmyuri;
     bson_destroy(match);
 
-    match = BCON_NEW("shutdown", BCON_DOUBLE(1));
+    match = BCON_NEW("shutdown", BCON_INT32(1));
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_shutdown;
     bson_destroy(match);
