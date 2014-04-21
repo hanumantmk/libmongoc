@@ -20,8 +20,16 @@
 #include "mongoc-util-private.h"
 #include "mongoc-write-concern-private.h"
 
-#define MONGOC_PROXY_CMD_HANDLER_DEFAULTS 4
+#define MONGOC_PROXY_CMD_HANDLER_DEFAULTS 6
 #define MONGOC_PROXY_DEFAULT_BATCH 20
+
+static mongoc_proxy_cursor_t *
+_mongoc_proxy_cmd_dispatch_ping(mongoc_proxy_t * proxy, const bson_t * cmd)
+{
+    return MONGOC_PROXY_CURSOR_NEW_FROM_BCON(proxy,
+        "pong", BCON_BOOL(true)
+    );
+}
 
 static mongoc_proxy_cursor_t *
 _mongoc_proxy_cmd_dispatch_isMaster(mongoc_proxy_t * proxy, const bson_t * cmd)
@@ -57,6 +65,20 @@ _mongoc_proxy_cmd_dispatch_getLog(mongoc_proxy_t * proxy, const bson_t * cmd)
         "log", "[", "]"
     );
 }
+
+static mongoc_proxy_cursor_t *
+_mongoc_proxy_cmd_dispatch_shutdown(mongoc_proxy_t * proxy, const bson_t * cmd)
+{
+    fprintf(stderr, "got shutdown\n");
+    mongoc_mutex_lock(&proxy->mutex);
+    proxy->keep_going = false;
+    mongoc_mutex_unlock(&proxy->mutex);
+
+    return MONGOC_PROXY_CURSOR_NEW_FROM_BCON(proxy,
+        "ok", BCON_INT32(1)
+    );
+}
+
 static bool
 _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
                          mongoc_rpc_t        *rpc,
@@ -82,7 +104,6 @@ _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
 
    if (!_mongoc_buffer_append_from_stream (buffer, conn->stream, 4,
                                            proxy->sockettimeoutms, error)) {
-      mongoc_counter_protocol_ingress_error_inc ();
       RETURN (false);
    }
 
@@ -93,11 +114,6 @@ _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
    msg_len = BSON_UINT32_FROM_LE (msg_len);
 
    if ((msg_len < 16) || (msg_len > proxy->max_bson_size)) {
-      bson_set_error (error,
-                      MONGOC_ERROR_PROTOCOL,
-                      MONGOC_ERROR_PROTOCOL_INVALID_REPLY,
-                      "Corrupt or malicious request received.");
-      mongoc_counter_protocol_ingress_error_inc ();
       RETURN (false);
    }
 
@@ -106,7 +122,6 @@ _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
     */
    if (!_mongoc_buffer_append_from_stream (buffer, conn->stream, msg_len - 4,
                                            proxy->sockettimeoutms, error)) {
-      mongoc_counter_protocol_ingress_error_inc ();
       RETURN (false);
    }
 
@@ -114,11 +129,6 @@ _mongoc_proxy_conn_recv (mongoc_proxy_conn_t *conn,
     * Scatter the buffer into the rpc structure.
     */
    if (!_mongoc_rpc_scatter (rpc, &buffer->data[buffer->off + pos], msg_len)) {
-      bson_set_error (error,
-                      MONGOC_ERROR_PROTOCOL,
-                      MONGOC_ERROR_PROTOCOL_INVALID_REPLY,
-                      "Failed to decode reply from server.");
-      mongoc_counter_protocol_ingress_error_inc ();
       RETURN (false);
    }
 
@@ -157,13 +167,6 @@ _mongoc_proxy_conn_sendv (mongoc_proxy_conn_t *conn,
       _mongoc_rpc_gather (&rpcs[i], &conn->iov);
 
       if (rpcs[i].header.msg_len > (int32_t)proxy->max_msg_size) {
-         bson_set_error (error,
-                         MONGOC_ERROR_CLIENT,
-                         MONGOC_ERROR_CLIENT_TOO_BIG,
-                         "Attempted to send an RPC larger than the "
-                         "max allowed message size. Was %u, allowed %u.",
-                         rpcs[i].header.msg_len,
-                         proxy->max_msg_size);
          RETURN (0);
       }
 
@@ -178,15 +181,6 @@ _mongoc_proxy_conn_sendv (mongoc_proxy_conn_t *conn,
 
    if (!mongoc_stream_writev (conn->stream, iov, iovcnt,
                               proxy->sockettimeoutms)) {
-      char buf[128];
-      char *errstr;
-      errstr = bson_strerror_r (errno, buf, sizeof buf);
-
-      bson_set_error (error,
-                      MONGOC_ERROR_STREAM,
-                      MONGOC_ERROR_STREAM_SOCKET,
-                      "Failure during socket delivery: %s",
-                      errstr);
       RETURN (0);
    }
 
@@ -300,6 +294,15 @@ _mongoc_proxy_conn_new (mongoc_proxy_t  *proxy,
     return conn;
 }
 
+static void
+_mongoc_proxy_conn_destroy (mongoc_proxy_conn_t * conn)
+{
+    mongoc_stream_destroy(conn->stream);
+    _mongoc_array_destroy(&conn->iov);
+    mongoc_thread_join(conn->thread);
+    bson_free(conn);
+}
+
 static bool
 _mongoc_proxy_extract_bson(bson_t * bson, const uint8_t * buf)
 {
@@ -349,23 +352,16 @@ _mongoc_proxy_conn_cursor_send (mongoc_proxy_conn_t   *conn,
     rpc.reply.flags = MONGOC_REPLY_AWAIT_CAPABLE;
     rpc.reply.request_id = req_id;
     rpc.reply.response_to = response_to;
-    rpc.reply.start_from = 0;
+    rpc.reply.start_from = cursor->pos;
 
-    if (cursor) {
-        rpc.reply.start_from = cursor->pos;
-
-        if (! n_return) {
-            to_send = MONGOC_PROXY_DEFAULT_BATCH;
-        } else if (n_return > 0) {
-            to_send = n_return;
-        } else {
-            to_send = n_return * -1;
-        }
-        more = true;
+    if (! n_return) {
+        to_send = MONGOC_PROXY_DEFAULT_BATCH;
+    } else if (n_return > 0) {
+        to_send = n_return;
     } else {
-        to_send = 0;
-        more = false;
+        to_send = n_return * -1;
     }
+    more = true;
 
     while (to_send && more) {
         bson_writer_begin(writer, &bson);
@@ -398,13 +394,22 @@ _mongoc_proxy_handle_cmd (mongoc_proxy_t *proxy,
                           mongoc_rpc_t   *rpc)
 {
     mongoc_proxy_cursor_t * cursor = NULL;
+    bool matched = false;
     int i;
 
     for (i = 0; i < proxy->n_cmd_dispatch; i++) {
         if (mongoc_matcher_match(proxy->cmd_dispatch[i].matcher, bson)) {
+            matched = true;
             cursor = proxy->cmd_dispatch[i].cb(proxy, bson);
             break;
         }
+    }
+
+    if (! matched) {
+        char * json = bson_as_json(bson, NULL);
+
+        fprintf(stderr, "unknown command: %s\n", json);
+        bson_free(json);
     }
 
     return cursor;
@@ -455,7 +460,9 @@ _mongoc_proxy_conn_loop(void * _conn)
                         );
                     }
 
-                    _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.query.n_return, rpc.query.request_id);
+                    if (cursor) {
+                        _mongoc_proxy_conn_cursor_send(conn, cursor, rpc.query.n_return, rpc.query.request_id);
+                    }
                     break;
                 }
 
@@ -475,10 +482,11 @@ _mongoc_proxy_conn_loop(void * _conn)
                 default:
                     fprintf(stderr, "Got request: %d\n", rpc.header.opcode);
             }
-        } else {
-            break;
         }
     }
+
+    _mongoc_buffer_destroy(&buffer);
+
     return NULL;
 }
 
@@ -489,6 +497,7 @@ _mongoc_proxy_loop(void * _proxy)
     mongoc_socket_t * socket;
     mongoc_proxy_conn_t * conn;
     bool keep_going;
+    int64_t expire_at;
 
     for (;;) {
         mongoc_mutex_lock(&proxy->mutex);
@@ -498,7 +507,9 @@ _mongoc_proxy_loop(void * _proxy)
             break;
         }
 
-        socket = mongoc_socket_accept(proxy->socket, proxy->sockettimeoutms);
+        expire_at = bson_get_monotonic_time() + proxy->sockettimeoutms;
+
+        socket = mongoc_socket_accept(proxy->socket, expire_at);
 
         if (socket) {
             conn = _mongoc_proxy_conn_new(proxy, socket);
@@ -533,22 +544,32 @@ _mongoc_proxy_cmd_dispatch_new (const mongoc_proxy_cmd_handler_t *cmd_handler,
     match = BCON_NEW("isMaster", BCON_INT32(1));
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_isMaster;
-    bson_free(match);
+    bson_destroy(match);
 
     match = BCON_NEW("getLog", "startupWarnings");
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_getLog;
-    bson_free(match);
+    bson_destroy(match);
 
     match = BCON_NEW("replSetGetStatus", BCON_DOUBLE(1));
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_replSetGetStatus;
-    bson_free(match);
+    bson_destroy(match);
 
     match = BCON_NEW("whatsmyuri", BCON_INT32(1));
     cmd[i].matcher = mongoc_matcher_new(match, error);
     cmd[i++].cb = _mongoc_proxy_cmd_dispatch_whatsmyuri;
-    bson_free(match);
+    bson_destroy(match);
+
+    match = BCON_NEW("shutdown", BCON_DOUBLE(1));
+    cmd[i].matcher = mongoc_matcher_new(match, error);
+    cmd[i++].cb = _mongoc_proxy_cmd_dispatch_shutdown;
+    bson_destroy(match);
+
+    match = BCON_NEW("ping", BCON_INT32(1));
+    cmd[i].matcher = mongoc_matcher_new(match, error);
+    cmd[i++].cb = _mongoc_proxy_cmd_dispatch_ping;
+    bson_destroy(match);
 
     return cmd;
 }
@@ -572,7 +593,7 @@ mongoc_proxy_new (const char                       *uri_string,
     memcpy(&proxy->handler, handler, sizeof *handler);
     proxy->data = data;
     proxy->socket = _mongoc_proxy_bind_tcp(host, error);
-    proxy->sockettimeoutms = 60000;
+    proxy->sockettimeoutms = 2000;
     proxy->keep_going = true;
 
     proxy->cmd_dispatch = _mongoc_proxy_cmd_dispatch_new(cmd_handler, n_cmd_handler, error);
@@ -585,10 +606,40 @@ mongoc_proxy_new (const char                       *uri_string,
     return proxy;
 }
 
+static void
+_mongoc_proxy_cursor_destroy (mongoc_proxy_cursor_t * cursor)
+{
+    mongoc_mutex_destroy(&cursor->mutex);
+    cursor->handler.destroy(cursor->data);
+    bson_free(cursor);
+}
+
 void
 mongoc_proxy_destroy (mongoc_proxy_t *proxy)
 {
+    mongoc_proxy_conn_t * conn, *conn_tmp;
+    mongoc_proxy_cursor_t * cursor, *cursor_tmp;
+    int i;
     mongoc_thread_join(proxy->thread);
+    mongoc_mutex_destroy(&proxy->mutex);
+    mongoc_socket_destroy(proxy->socket);
+
+    for (i = 0; i < proxy->n_cmd_dispatch; i++) {
+        mongoc_matcher_destroy(proxy->cmd_dispatch[i].matcher);
+    }
+    bson_free(proxy->cmd_dispatch);
+
+    HASH_ITER(hh, proxy->cursors, cursor, cursor_tmp) {
+        HASH_DELETE(hh, proxy->cursors, cursor);
+
+        _mongoc_proxy_cursor_destroy(cursor);
+    }
+
+    DL_FOREACH_SAFE(proxy->connections, conn, conn_tmp) {
+        DL_DELETE(proxy->connections, conn);
+        _mongoc_proxy_conn_destroy(conn);
+    }
+
     bson_free(proxy);
 }
 
