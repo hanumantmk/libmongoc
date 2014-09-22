@@ -17,27 +17,141 @@
 
 #include "mongoc-config.h"
 
-#include <openssl/rand.h>
-
 #include "mongoc-rand.h"
 #include "mongoc-rand-private.h"
 
-int _mongoc_rand_bytes(uint8_t * buf, int num) {
-    return RAND_bytes(buf, num);
+#ifdef MONGOC_ENABLE_SSL
+# include <openssl/rand.h>
+#else
+# include "mongoc-thread-private.h"
+#endif
+
+int
+_mongoc_rand (void)
+{
+   int x, r;
+
+   r = _mongoc_rand_pseudo_bytes ((uint8_t *)&x, sizeof (x));
+
+   BSON_ASSERT (r != -1);
+
+   return x;
 }
 
-int _mongoc_pseudo_rand_bytes(uint8_t * buf, int num) {
-    return RAND_pseudo_bytes(buf, num);
+#ifdef MONGOC_ENABLE_SSL
+
+int
+_mongoc_rand_bytes (uint8_t *buf,
+                    int      num)
+{
+   return RAND_bytes (buf, num);
 }
 
-void mongoc_rand_seed(const void* buf, int num) {
-    RAND_seed(buf, num);
+int
+_mongoc_rand_pseudo_bytes (uint8_t *buf,
+                           int      num)
+{
+   return RAND_pseudo_bytes (buf, num);
 }
 
-void mongoc_rand_add(const void* buf, int num, double entropy) {
-    RAND_add(buf, num, entropy);
+void
+mongoc_rand_seed (const void *buf,
+                  int         num)
+{
+   RAND_seed (buf, num);
 }
 
-int mongoc_rand_status(void) {
-    return RAND_status();
+void
+mongoc_rand_add (const void *buf,
+                 int         num,
+                 double      entropy)
+{
+   RAND_add (buf, num, entropy);
 }
+
+int
+mongoc_rand_status (void)
+{
+   return RAND_status ();
+}
+
+#else
+
+#ifndef MONGOC_OS_WIN32
+mongoc_mutex_t gMongocRandMutex = MONGOC_MUTEX_INITIALIZER;
+uint32_t gMongocRandSeed = 1;
+#endif
+
+int
+_mongoc_rand_bytes (uint8_t *buf,
+                    int      num)
+{
+   return -1;
+}
+
+int
+_mongoc_rand_pseudo_bytes (uint8_t *buf,
+                           int      num)
+{
+   int r;
+   int written;
+
+#ifndef MONGOC_OS_WIN32
+   mongoc_mutex_lock (&gMongocRandMutex);
+#endif
+
+   for (written = 0; written < num; written += 4) {
+#ifdef MONGOC_OS_WIN32
+      r = rand ();
+#else
+      r = rand_r (&gMongocRandSeed);
+#endif
+
+      memcpy (buf + written, &r, MIN (num - written, 4));
+   }
+
+#ifndef MONGOC_OS_WIN32
+   mongoc_mutex_unlock (&gMongocRandMutex);
+#endif
+
+   return 0;
+}
+
+void
+mongoc_rand_seed (const void *buf,
+                  int         num)
+{
+   int written;
+   uint32_t seed = 0;
+   uint32_t pad = 0;
+
+   for (written = 0; written < num; written += 4) {
+      memcpy (&pad, buf + written, MIN (num - written, 4));
+
+      seed ^= pad;
+   }
+
+#ifdef MONGOC_OS_WIN32
+   srand (seed);
+#else
+   mongoc_mutex_lock (&gMongocRandMutex);
+   gMongocRandSeed = seed;
+   mongoc_mutex_unlock (&gMongocRandMutex);
+#endif
+}
+
+void
+mongoc_rand_add (const void *buf,
+                 int         num,
+                 double      entropy)
+{
+   mongoc_rand_seed (buf, num);
+}
+
+int
+mongoc_rand_status (void)
+{
+   return 0;
+}
+
+#endif

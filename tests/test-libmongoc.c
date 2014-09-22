@@ -38,6 +38,7 @@ extern void test_gridfs_file_page_install (TestSuite *suite);
 extern void test_list_install             (TestSuite *suite);
 extern void test_matcher_install          (TestSuite *suite);
 extern void test_queue_install            (TestSuite *suite);
+extern void test_rand_install             (TestSuite *suite);
 extern void test_read_prefs_install       (TestSuite *suite);
 extern void test_rpc_install              (TestSuite *suite);
 extern void test_stream_install           (TestSuite *suite);
@@ -141,6 +142,7 @@ main (int   argc,
    test_list_install (&suite);
    test_matcher_install (&suite);
    test_queue_install (&suite);
+   test_rand_install (&suite);
    test_read_prefs_install (&suite);
    test_rpc_install (&suite);
    test_stream_install (&suite);

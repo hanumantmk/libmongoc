@@ -33,6 +33,7 @@
 #include "mongoc-log.h"
 #include "mongoc-opcode.h"
 #include "mongoc-read-prefs-private.h"
+#include "mongoc-rand-private.h"
 #include "mongoc-rpc-private.h"
 #ifdef MONGOC_ENABLE_SASL
 #include "mongoc-sasl-private.h"
@@ -791,7 +792,7 @@ dispatch:
    /*
     * Choose a cluster node within threshold at random.
     */
-   count = count ? rand() % count : count;
+   count = count ? _mongoc_rand() % count : count;
    for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
       if (nodes[i]) {
          if (!count) {

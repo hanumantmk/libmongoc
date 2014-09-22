@@ -35,6 +35,7 @@
 #include "mongoc-log.h"
 #include "mongoc-opcode.h"
 #include "mongoc-queue-private.h"
+#include "mongoc-rand-private.h"
 #include "mongoc-socket.h"
 #include "mongoc-stream-buffered.h"
 #include "mongoc-stream-socket.h"
@@ -700,7 +701,7 @@ mongoc_client_new (const char *uri_string)
 
    client = bson_malloc0(sizeof *client);
    client->uri = uri;
-   client->request_id = rand ();
+   client->request_id = _mongoc_rand();
    client->initiator = mongoc_client_default_stream_initiator;
    client->initiator_data = client;
 

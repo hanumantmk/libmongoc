@@ -31,6 +31,7 @@
 #endif
 
 #include "ha-test.h"
+#include "mongoc-rand-private.h"
 
 #ifdef BSON_OS_WIN32
 #include <shlwapi.h>
@@ -366,27 +367,11 @@ ha_node_destroy (ha_node_t *node)
 }
 
 
-static MONGOC_ONCE_FUN(random_init)
-{
-   srand((unsigned)time(NULL));
-   MONGOC_ONCE_RETURN;
-}
-
-
-static int
-random_int (void)
-{
-   static mongoc_once_t once = MONGOC_ONCE_INIT;
-   mongoc_once(&once, random_init);
-   return rand();
-}
-
-
 static int
 random_int_range (int low,
                   int high)
 {
-   return low + (random_int() % (high - low));
+   return low + (_mongoc_rand() % (high - low));
 }
 
 

@@ -87,6 +87,7 @@ test_libmongoc_SOURCES = \
 	tests/test-mongoc-list.c \
 	tests/test-mongoc-matcher.c \
 	tests/test-mongoc-queue.c \
+	tests/test-mongoc-rand.c \
 	tests/test-mongoc-read-prefs.c \
 	tests/test-mongoc-rpc.c \
 	tests/test-mongoc-stream.c \

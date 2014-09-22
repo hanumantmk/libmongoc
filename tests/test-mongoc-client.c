@@ -4,6 +4,7 @@
 #include "mongoc-cursor-private.h"
 #include "mock-server.h"
 #include "mongoc-client-private.h"
+#include "mongoc-rand-private.h"
 #include "mongoc-tests.h"
 #include "TestSuite.h"
 
@@ -197,7 +198,7 @@ test_wire_version (void)
    bson_t q = BSON_INITIALIZER;
    char *uristr;
 
-   port = 20000 + (rand () % 1000);
+   port = 20000 + (_mongoc_rand () % 1000);
 
    server = mock_server_new ("127.0.0.1", port, NULL, NULL);
    mock_server_set_wire_version (server, 10, 11);
@@ -330,7 +331,7 @@ test_mongoc_client_read_prefs (void)
    bson_t q = BSON_INITIALIZER;
    char *uristr;
 
-   port = 20000 + (rand () % 1000);
+   port = 20000 + (_mongoc_rand () % 1000);
 
    server = mock_server_new ("127.0.0.1", port, read_prefs_handler, &success);
    mock_server_run_in_thread (server);

@@ -59,6 +59,8 @@ INST_H_FILES = \
 	src/mongoc/mongoc-matcher.h \
 	src/mongoc/mongoc-opcode.h \
 	src/mongoc/mongoc-queue-private.h \
+	src/mongoc/mongoc-rand.h \
+	src/mongoc/mongoc-rand-private.h \
 	src/mongoc/mongoc-read-prefs-private.h \
 	src/mongoc/mongoc-read-prefs.h \
 	src/mongoc/mongoc-rpc-private.h \
@@ -83,8 +85,6 @@ INST_H_FILES = \
 
 if ENABLE_SSL
 INST_H_FILES += \
-	src/mongoc/mongoc-rand.h \
-	src/mongoc/mongoc-rand-private.h \
 	src/mongoc/mongoc-stream-tls.h \
 	src/mongoc/mongoc-ssl.h
 endif
@@ -114,6 +114,7 @@ MONGOC_SOURCES_SHARED += \
 	src/mongoc/mongoc-matcher-op.c \
 	src/mongoc/mongoc-matcher.c \
 	src/mongoc/mongoc-queue.c \
+	src/mongoc/mongoc-rand.c \
 	src/mongoc/mongoc-read-prefs.c \
 	src/mongoc/mongoc-rpc.c \
 	src/mongoc/mongoc-socket.c \
@@ -129,7 +130,6 @@ MONGOC_SOURCES_SHARED += \
 
 if ENABLE_SSL
 MONGOC_SOURCES_SHARED += \
-	src/mongoc/mongoc-rand.c \
 	src/mongoc/mongoc-scram.c \
 	src/mongoc/mongoc-stream-tls.c \
 	src/mongoc/mongoc-ssl.c

@@ -6,6 +6,7 @@
 #include <fcntl.h>
 
 #include "test-libmongoc.h"
+#include "mongoc-rand-private.h"
 #include "mongoc-tests.h"
 #include "TestSuite.h"
 
@@ -86,7 +87,7 @@ test_remove (void)
    mongoc_gridfs_drop (gridfs, &error);
 
 
-   bson_snprintf (name, sizeof name, "test-remove.%u", rand ());
+   bson_snprintf (name, sizeof name, "test-remove.%u", _mongoc_rand ());
    opts.filename = name;
 
    file = mongoc_gridfs_create_file (gridfs, &opts);
