@@ -14,6 +14,11 @@ example_gridfs_SOURCES = examples/example-gridfs.c
 example_gridfs_CFLAGS = $(EXAMPLE_CFLAGS)
 example_gridfs_LDADD = $(EXAMPLE_LDADD)
 
+noinst_PROGRAMS += ssl-perf
+ssl_perf_SOURCES = examples/ssl-perf.c
+ssl_perf_CFLAGS = $(EXAMPLE_CFLAGS)
+ssl_perf_LDADD = $(EXAMPLE_LDADD)
+
 noinst_PROGRAMS += mongoc-dump
 mongoc_dump_SOURCES = examples/mongoc-dump.c
 mongoc_dump_CFLAGS = $(EXAMPLE_CFLAGS)

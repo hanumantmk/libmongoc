@@ -255,7 +255,7 @@ ssl_test_client (void * ptr)
    }
 
    r = mongoc_stream_writev(ssl_stream, wiov_many, MANY_SIZE, TIMEOUT);
-   assert(r == wiov_many[i].iov_len * MANY_SIZE);
+   assert(r == wiov_many[0].iov_len * MANY_SIZE);
 
    riov.iov_len = 1;
 

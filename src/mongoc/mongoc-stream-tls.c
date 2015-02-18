@@ -454,7 +454,8 @@ static ssize_t
 _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
                                   mongoc_iovec_t  *iov,
                                   size_t           iovcnt,
-                                  int32_t          timeout_msec)
+                                  int32_t          timeout_msec,
+                                  char            *buf)
 {
    mongoc_stream_tls_t *tls = (mongoc_stream_tls_t *)stream;
    ssize_t ret = 0;
@@ -476,10 +477,9 @@ _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
     * write immediately.  We take care of doing buffer writes by re-invoking
     * ourself with a single iovec_t, pointing at our stack buffer.
     */
-   char buf[MONGOC_STREAM_TLS_BUFFER_SIZE];
    char *buf_head = buf;
    char *buf_tail = buf;
-   char *buf_end = buf + sizeof(buf);
+   char *buf_end = buf + MONGOC_STREAM_TLS_BUFFER_SIZE;
    mongoc_iovec_t buf_iovec;
    size_t bytes;
 
@@ -497,8 +497,8 @@ _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
       iov_pos = 0;
 
       while (iov_pos < iov[i].iov_len) {
-         if (buf_head != buf_tail ||
-             ((i + 1 < iovcnt) && ((buf_tail - buf_head) > (iov[i].iov_len - iov_pos)))) {
+         if (buf && (buf_head != buf_tail ||
+             ((i + 1 < iovcnt) && ((buf_end - buf_tail) > (iov[i].iov_len - iov_pos))))) {
              /* If we have:
               *   - buffered bytes already
               *   - another iovec to send after this one and we don't have more
@@ -518,7 +518,7 @@ _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
                 buf_iovec.iov_len = buf_tail - buf_head;
 
                 child_ret = _mongoc_stream_tls_writev_helper (stream, &buf_iovec, 1,
-                                                              tls->timeout_msec);
+                                                              tls->timeout_msec, NULL);
 
                 if (child_ret < 0) {
                    /* Buffer write failed, just return the error */
@@ -527,7 +527,7 @@ _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
 
                 ret += child_ret;
 
-                if (child_ret < buf_tail - buf_head) {
+                if (child_ret < buf_iovec.iov_len) {
                    /* we timed out, so send back what we could send */
 
                    return ret;
@@ -572,20 +572,19 @@ _mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
       }
    }
 
-   if (buf_head != buf_tail) {
+   if (buf && buf_head != buf_tail) {
       /* If we have any bytes buffered, send */
       buf_iovec.iov_base = buf_head;
       buf_iovec.iov_len = buf_tail - buf_head;
 
       child_ret = _mongoc_stream_tls_writev_helper (stream, &buf_iovec, 1,
-                                                    tls->timeout_msec);
+                                                    tls->timeout_msec, NULL);
 
       if (child_ret < 0) {
          return child_ret;
       }
 
       ret += child_ret;
-      buf_tail = buf_head;
    }
 
    return ret;
@@ -616,11 +615,13 @@ _mongoc_stream_tls_writev (mongoc_stream_t *stream,
                            size_t           iovcnt,
                            int32_t          timeout_msec)
 {
-   ssize_t ret = _mongoc_stream_tls_writev_helper (stream, iov, iovcnt,
-                                                   timeout_msec);
+   char buf[MONGOC_STREAM_TLS_BUFFER_SIZE];
+   ssize_t ret;
+
+   ret = _mongoc_stream_tls_writev_helper (stream, iov, iovcnt, timeout_msec, buf);
 
    if (ret >= 0) {
-      mongoc_counter_streams_egress_add(ret);
+      mongoc_counter_streams_egress_add (ret);
    }
 
    return ret;
