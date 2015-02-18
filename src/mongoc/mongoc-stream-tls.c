@@ -451,140 +451,46 @@ _mongoc_stream_tls_flush (mongoc_stream_t *stream)
 
 
 static ssize_t
-_mongoc_stream_tls_writev_helper (mongoc_stream_t *stream,
-                                  mongoc_iovec_t  *iov,
-                                  size_t           iovcnt,
-                                  int32_t          timeout_msec,
-                                  char            *buf)
+_mongoc_stream_tls_write (mongoc_stream_tls_t *tls,
+                          char                *buf,
+                          size_t               buf_len)
 {
-   mongoc_stream_tls_t *tls = (mongoc_stream_tls_t *)stream;
-   ssize_t ret = 0;
-   ssize_t child_ret;
-   size_t i;
-   size_t iov_pos = 0;
-   int write_ret;
+   ssize_t ret;
 
    int64_t now;
    int64_t expire = 0;
 
-   /* There's a bit of a dance to coalesce vectorized writes into
-    * MONGOC_STREAM_TLS_BUFFER_SIZE'd writes to avoid lots of small tls
-    * packets.
-    *
-    * The basic idea is that we want to combine writes in the buffer if they're
-    * smaller than the buffer, flushing as it gets full.  For larger writes, or
-    * the last write in the iovec array, we want to ignore the buffer and just
-    * write immediately.  We take care of doing buffer writes by re-invoking
-    * ourself with a single iovec_t, pointing at our stack buffer.
-    */
-   char *buf_head = buf;
-   char *buf_tail = buf;
-   char *buf_end = buf + MONGOC_STREAM_TLS_BUFFER_SIZE;
-   mongoc_iovec_t buf_iovec;
-   size_t bytes;
-
    BSON_ASSERT (tls);
-   BSON_ASSERT (iov);
-   BSON_ASSERT (iovcnt);
+   BSON_ASSERT (buf);
+   BSON_ASSERT (buf_len);
 
-   tls->timeout_msec = timeout_msec;
-
-   if (timeout_msec >= 0) {
-      expire = bson_get_monotonic_time () + (timeout_msec * 1000UL);
+   if (tls->timeout_msec >= 0) {
+      expire = bson_get_monotonic_time () + (tls->timeout_msec * 1000UL);
    }
 
-   for (i = 0; i < iovcnt; i++) {
-      iov_pos = 0;
+   ret = BIO_write (tls->bio, buf, buf_len);
 
-      while (iov_pos < iov[i].iov_len) {
-         if (buf && (buf_head != buf_tail ||
-             ((i + 1 < iovcnt) && ((buf_end - buf_tail) > (iov[i].iov_len - iov_pos))))) {
-             /* If we have:
-              *   - buffered bytes already
-              *   - another iovec to send after this one and we don't have more
-              *     bytes to send than the size of the buffer.
-              *
-              * copy into the buffer */
+   if (ret < 0) {
+      return ret;
+   }
 
-             bytes = BSON_MIN (iov[i].iov_len - iov_pos, buf_end - buf_tail);
+   if (expire) {
+      now = bson_get_monotonic_time ();
 
-             memcpy (buf_tail, iov[i].iov_base + iov_pos, bytes);
-             buf_tail += bytes;
-             iov_pos += bytes;
-
-             if (buf_tail == buf_end) {
-                /* If we're full, send */
-                buf_iovec.iov_base = buf_head;
-                buf_iovec.iov_len = buf_tail - buf_head;
-
-                child_ret = _mongoc_stream_tls_writev_helper (stream, &buf_iovec, 1,
-                                                              tls->timeout_msec, NULL);
-
-                if (child_ret < 0) {
-                   /* Buffer write failed, just return the error */
-                   return child_ret;
-                }
-
-                ret += child_ret;
-
-                if (child_ret < buf_iovec.iov_len) {
-                   /* we timed out, so send back what we could send */
-
-                   return ret;
-                }
-
-                /* reset all the pointers */
-                buf_tail = buf_head = buf;
-             }
-          } else {
-            /* Didn't buffer, so just write it through */
-
-            write_ret = BIO_write (tls->bio, (char *)iov[i].iov_base + iov_pos,
-                                 (int)(iov[i].iov_len - iov_pos));
-
-            if (write_ret < 0) {
-               return write_ret;
-            }
-
-            if (expire) {
-               now = bson_get_monotonic_time ();
-
-               if ((expire - now) < 0) {
-                  if (write_ret == 0) {
-                     mongoc_counter_streams_timeout_inc();
+      if ((expire - now) < 0) {
+         if (ret < buf_len) {
+            mongoc_counter_streams_timeout_inc();
 #ifdef _WIN32
-                     errno = WSAETIMEDOUT;
+            errno = WSAETIMEDOUT;
 #else
-                     errno = ETIMEDOUT;
+            errno = ETIMEDOUT;
 #endif
-                     return ret ? ret : -1;
-                  }
-
-                  tls->timeout_msec = 0;
-               } else {
-                  tls->timeout_msec = (expire - now) / 1000L;
-               }
-            }
-
-            ret += write_ret;
-            iov_pos += write_ret;
          }
+
+         tls->timeout_msec = 0;
+      } else {
+         tls->timeout_msec = (expire - now) / 1000L;
       }
-   }
-
-   if (buf && buf_head != buf_tail) {
-      /* If we have any bytes buffered, send */
-      buf_iovec.iov_base = buf_head;
-      buf_iovec.iov_len = buf_tail - buf_head;
-
-      child_ret = _mongoc_stream_tls_writev_helper (stream, &buf_iovec, 1,
-                                                    tls->timeout_msec, NULL);
-
-      if (child_ret < 0) {
-         return child_ret;
-      }
-
-      ret += child_ret;
    }
 
    return ret;
@@ -615,10 +521,110 @@ _mongoc_stream_tls_writev (mongoc_stream_t *stream,
                            size_t           iovcnt,
                            int32_t          timeout_msec)
 {
+   mongoc_stream_tls_t *tls = (mongoc_stream_tls_t *)stream;
    char buf[MONGOC_STREAM_TLS_BUFFER_SIZE];
-   ssize_t ret;
 
-   ret = _mongoc_stream_tls_writev_helper (stream, iov, iovcnt, timeout_msec, buf);
+   ssize_t ret = 0;
+   ssize_t child_ret;
+   size_t i;
+   size_t iov_pos = 0;
+
+   /* There's a bit of a dance to coalesce vectorized writes into
+    * MONGOC_STREAM_TLS_BUFFER_SIZE'd writes to avoid lots of small tls
+    * packets.
+    *
+    * The basic idea is that we want to combine writes in the buffer if they're
+    * smaller than the buffer, flushing as it gets full.  For larger writes, or
+    * the last write in the iovec array, we want to ignore the buffer and just
+    * write immediately.  We take care of doing buffer writes by re-invoking
+    * ourself with a single iovec_t, pointing at our stack buffer.
+    */
+   char *buf_head = buf;
+   char *buf_tail = buf;
+   char *buf_end = buf + MONGOC_STREAM_TLS_BUFFER_SIZE;
+   size_t bytes;
+
+   char *to_write = NULL;
+   size_t to_write_len;
+
+   BSON_ASSERT (tls);
+   BSON_ASSERT (iov);
+   BSON_ASSERT (iovcnt);
+
+   tls->timeout_msec = timeout_msec;
+
+   for (i = 0; i < iovcnt; i++) {
+      iov_pos = 0;
+
+      while (iov_pos < iov[i].iov_len) {
+         if (buf_head != buf_tail ||
+             ((i + 1 < iovcnt) &&
+              ((buf_end - buf_tail) > (iov[i].iov_len - iov_pos)))) {
+            /* If we have:
+             *   - buffered bytes already
+             *   - another iovec to send after this one and we don't have more
+             *     bytes to send than the size of the buffer.
+             *
+             * copy into the buffer */
+
+            bytes = BSON_MIN (iov[i].iov_len - iov_pos, buf_end - buf_tail);
+
+            memcpy (buf_tail, iov[i].iov_base + iov_pos, bytes);
+            buf_tail += bytes;
+            iov_pos += bytes;
+
+            if (buf_tail == buf_end) {
+               /* If we're full, request send */
+
+               to_write = buf_head;
+               to_write_len = buf_tail - buf_head;
+
+               buf_tail = buf_head = buf;
+            }
+         } else {
+            /* Didn't buffer, so just write it through */
+
+            to_write = (char *)iov[i].iov_base + iov_pos;
+            to_write_len = iov[i].iov_len - iov_pos;
+
+            iov_pos += to_write_len;
+         }
+
+         if (to_write) {
+            /* We get here if we buffered some bytes and filled the buffer, or
+             * if we didn't buffer and have to send out of the iovec */
+
+            child_ret = _mongoc_stream_tls_write (tls, to_write, to_write_len);
+
+            if (child_ret < 0) {
+               /* Buffer write failed, just return the error */
+               return child_ret;
+            }
+
+            ret += child_ret;
+
+            if (child_ret < to_write_len) {
+               /* we timed out, so send back what we could send */
+
+               return ret;
+            }
+
+            to_write = NULL;
+         }
+      }
+   }
+
+   if (buf_head != buf_tail) {
+      /* If we have any bytes buffered, send */
+
+      child_ret = _mongoc_stream_tls_write (tls, buf_head, buf_tail - buf_head);
+
+      if (child_ret < 0) {
+         return child_ret;
+      }
+
+      ret += child_ret;
+   }
 
    if (ret >= 0) {
       mongoc_counter_streams_egress_add (ret);
