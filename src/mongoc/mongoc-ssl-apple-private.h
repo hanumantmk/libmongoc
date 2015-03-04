@@ -25,7 +25,27 @@
 
 #include "mongoc-ssl.h"
 
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#include <sys/mman.h>
+#include <Security/SecureTransport.h>
+#include <CommonCrypto/CommonDigest.h>
+#include <TargetConditionals.h>
+
 BSON_BEGIN_DECLS
+
+typedef struct
+{
+    SSLContextRef     context;
+    SecIdentityRef cert_and_key;
+    CFMutableArrayRef anchor_certs;
+} mongoc_ssl_apple_t;
+
+void
+_mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_client);
+
+void
+_mongoc_ssl_apple_destroy (mongoc_ssl_apple_t *out);
 
 char    *
 _mongoc_ssl_apple_extract_subject (const char *filename);

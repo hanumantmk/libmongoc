@@ -92,7 +92,7 @@ mongoc_stream_tls_new (mongoc_stream_t  *base_stream,
                        mongoc_ssl_opt_t *opt,
                        int               client)
 {
-   return (mongoc_stream_t *)mongoc_stream_tls_new_impl(base_stream, opt, client);
+   return mongoc_stream_tls_new_impl(base_stream, opt, client);
 }
 
 #endif

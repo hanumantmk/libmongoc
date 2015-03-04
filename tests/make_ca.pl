@@ -53,7 +53,7 @@ system("rm", "-rf", "$ca_dir");
    openssl ("req", "-passout", "pass:testpass", "-newkey", "rsa:1024",
             req_args ("pass.mongodb.com"));
    openssl ("ca", ca_args ("pass.mongodb.com"));
-   dist_files ("pass.mongodb.com");
+   dist_files ("pass.mongodb.com", "pass:testpass");
 }
 
 # generate a cert and revoke it to test crls
@@ -89,9 +89,17 @@ system("rm", "-rf", "$ca_dir");
 system("c_rehash", "$ca_dir/verify") and die "failed: $?";
 
 sub dist_files {
-   my ($name) = @_;
+   my ($name, $pass) = @_;
+
+   $pass ||= "";
    
    system("cat '$ca_dir/build/$name.key' '$ca_dir/build/$name.crt' > '$ca_dir/keys/$name.pem'") and die "terribly: $?";
+
+   openssl ("pkcs12", "-export", "-in", "$ca_dir/keys/$name.pem", "-out",
+            "$ca_dir/keys/$name.pkcs12", "-name", $name,
+            ($pass ? ("-passout", $pass, "-passin", $pass) : ("-passout", "pass:")),
+   );
+
    copy("$ca_dir/build/$name.crt", "$ca_dir/verify/$name.pem");
 }
 

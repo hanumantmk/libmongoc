@@ -38,7 +38,9 @@ struct _mongoc_ssl_opt_t
    const char *ca_dir;
    const char *crl_file;
    bool        weak_cert_validation;
-   void       *padding [8];
+   const char *pkcs12_file;
+   const char *pkcs12_pwd;
+   void       *padding [6];
 };
 
 

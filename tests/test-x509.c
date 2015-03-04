@@ -18,5 +18,7 @@ test_extract_subject (void)
 void
 test_x509_install (TestSuite *suite)
 {
+#ifdef MONGOC_OPENSSL
    TestSuite_Add (suite, "/SSL/extract_subject", test_extract_subject);
+#endif
 }
