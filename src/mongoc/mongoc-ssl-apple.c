@@ -218,6 +218,7 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
   CFStringRef password = cPassword ? CFStringCreateWithCString(NULL,
     cPassword, kCFStringEncodingUTF8) : NULL;
   CFDataRef pkcs_data = NULL;
+  fprintf(stderr, "loading: %s %s\n", cPath, cPassword);
       fprintf(stderr, "got to %d\n", __LINE__);
 
   /* We can import P12 files on iOS or OS X 10.7 or later: */
@@ -231,14 +232,20 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
     const void *cValues[] = {password};
     CFDictionaryRef options = CFDictionaryCreate(NULL, cKeys, cValues,
       password ? 1L : 0L, NULL, NULL);
+      fprintf(stderr, "got to %d\n", __LINE__);
     CFArrayRef items = NULL;
 
+      fprintf(stderr, "got to %d\n", __LINE__);
     /* Here we go: */
     status = SecPKCS12Import(pkcs_data, options, &items);
-      fprintf(stderr, "got to %d\n", __LINE__);
+    fprintf(stderr, "status: %d\n", status);
+    if(status == noErr && items) {
+        fprintf(stderr, "status: %d, %d\n", status, CFArrayGetCount(items));
+    }
     if(status == noErr && items && CFArrayGetCount(items)) {
       fprintf(stderr, "got to %d\n", __LINE__);
       CFDictionaryRef identity_and_trust = CFArrayGetValueAtIndex(items, 0L);
+      fprintf(stderr, "got to %d\n", __LINE__);
       const void *temp_identity = CFDictionaryGetValue(identity_and_trust,
         kSecImportItemIdentity);
 
@@ -263,11 +270,11 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
   if (status == noErr) {
       SecCertificateRef cert = NULL;
       CFTypeRef certs_c[1];
-      CFArrayRef certs;
+      CFArrayRef certs = NULL;
 
       /* If we found one, print it out: */
       status = SecIdentityCopyCertificate(ssl->cert_and_key, &cert);
-      fprintf(stderr, "got to %d\n", __LINE__);
+      fprintf(stderr, "got to %d, %d\n", __LINE__, status);
       if(status == noErr) {
       fprintf(stderr, "got to %d\n", __LINE__);
         CFStringRef cert_summary = CopyCertSubject(cert);
@@ -285,13 +292,17 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
           CFRelease(cert);
         }
       }
+      certs_c[0] = ssl->cert_and_key;
+      certs = CFArrayCreate(NULL, (const void **)certs_c, 1L,
+                            &kCFTypeArrayCallBacks);
+      status = SSLSetCertificate(ssl->context, certs);
       if(certs)
         CFRelease(certs);
+
       if(status != noErr) {
 //        failf(data, "SSL: SSLSetCertificate() failed: OSStatus %d", err);
         return false;
       }
-      CFRelease(ssl->cert_and_key);
 
       fprintf(stderr, "got to %d\n", __LINE__);
       return true;
@@ -343,6 +354,7 @@ _mongoc_ssl_apple_load_cert (mongoc_ssl_apple_t *ssl, const char *cafile)
             break;
         }
 
+        fprintf(stderr, "loaded a cert...\n");
         rc = append_cert_to_array(der, derlen, array);
         free(der);
         if(! rc) {
@@ -394,19 +406,17 @@ _mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_c
     }
 //   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
 //   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
-   SSLSetEnableCertVerify(out->context, ! opt->weak_cert_validation);
+//   SSLSetEnableCertVerify(out->context, ! opt->weak_cert_validation);
+
+   fprintf(stderr, "setting weak cert validation: isclient(%d), weak_cert(%d)\n", is_client, opt->weak_cert_validation);
 
    if (opt->pkcs12_file) {
-       if (opt->pkcs12_pwd) {
-           _mongoc_ssl_apple_load_pkcs12(out, opt->pkcs12_file, opt->pkcs12_pwd);
-       } else {
-           _mongoc_ssl_apple_load_pkcs12(out, opt->pkcs12_file, "");
-       }
+       _mongoc_ssl_apple_load_pkcs12(out, opt->pkcs12_file, opt->pkcs12_pwd);
    }
 
    if (opt->ca_file) {
        _mongoc_ssl_apple_load_cert (out, opt->ca_file);
-    }
+   }
 }
 
 void

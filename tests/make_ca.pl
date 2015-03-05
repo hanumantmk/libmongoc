@@ -91,14 +91,16 @@ system("c_rehash", "$ca_dir/verify") and die "failed: $?";
 sub dist_files {
    my ($name, $pass) = @_;
 
-   $pass ||= "";
-   
-   system("cat '$ca_dir/build/$name.key' '$ca_dir/build/$name.crt' > '$ca_dir/keys/$name.pem'") and die "terribly: $?";
-
-   openssl ("pkcs12", "-export", "-in", "$ca_dir/keys/$name.pem", "-out",
-            "$ca_dir/keys/$name.pkcs12", "-name", $name,
+   openssl ("pkcs12", "-export",
+            "-inkey", "$ca_dir/build/$name.key",
+            "-in", "$ca_dir/build/$name.crt",
+            "-certfile", "$ca_dir/signing-ca.crt",
+            "-out", "$ca_dir/keys/$name.p12",
+            "-name", $name,
             ($pass ? ("-passout", $pass, "-passin", $pass) : ("-passout", "pass:testpass")),
    );
+
+   system("cat '$ca_dir/build/$name.key' '$ca_dir/build/$name.crt' > '$ca_dir/keys/$name.pem'") and die "terribly: $?";
 
    copy("$ca_dir/build/$name.crt", "$ca_dir/verify/$name.pem");
 }
