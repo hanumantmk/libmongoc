@@ -235,6 +235,7 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
 
     /* Here we go: */
     status = SecPKCS12Import(pkcs_data, options, &items);
+      fprintf(stderr, "got to %d\n", __LINE__);
     if(status == noErr && items && CFArrayGetCount(items)) {
       fprintf(stderr, "got to %d\n", __LINE__);
       CFDictionaryRef identity_and_trust = CFArrayGetValueAtIndex(items, 0L);
@@ -284,10 +285,6 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
           CFRelease(cert);
         }
       }
-      certs_c[0] = ssl->cert_and_key;
-      certs = CFArrayCreate(NULL, (const void **)certs_c, 1L,
-                            &kCFTypeArrayCallBacks);
-      status = SSLSetCertificate(ssl->context, certs);
       if(certs)
         CFRelease(certs);
       if(status != noErr) {
@@ -392,13 +389,12 @@ _mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_c
 
    if (is_client) {
        out->context = SSLCreateContext(NULL, kSSLClientSide, kSSLStreamType);
-
-       SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
     } else {
        out->context = SSLCreateContext(NULL, kSSLServerSide, kSSLStreamType);
-
-       SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
     }
+//   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
+//   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
+   SSLSetEnableCertVerify(out->context, ! opt->weak_cert_validation);
 
    if (opt->pkcs12_file) {
        if (opt->pkcs12_pwd) {

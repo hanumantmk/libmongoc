@@ -97,7 +97,7 @@ sub dist_files {
 
    openssl ("pkcs12", "-export", "-in", "$ca_dir/keys/$name.pem", "-out",
             "$ca_dir/keys/$name.pkcs12", "-name", $name,
-            ($pass ? ("-passout", $pass, "-passin", $pass) : ("-passout", "pass:")),
+            ($pass ? ("-passout", $pass, "-passin", $pass) : ("-passout", "pass:testpass")),
    );
 
    copy("$ca_dir/build/$name.crt", "$ca_dir/verify/$name.pem");

@@ -93,7 +93,12 @@ test_mongoc_tls_no_verify (void)
    ssl_test_result_t sr;
    ssl_test_result_t cr;
 
+#ifdef MONGOC_APPLE_NATIVE_TLS
+   sopt.pkcs12_file = PKCS12FILE_NOPASS;
+   sopt.pkcs12_pwd = PASSWORD;
+#else
    sopt.pem_file = PEMFILE_NOPASS;
+#endif
    sopt.ca_file = CAFILE;
 
    copt.ca_file = CAFILE;
@@ -114,7 +119,12 @@ test_mongoc_tls_bad_verify (void)
    ssl_test_result_t sr;
    ssl_test_result_t cr;
 
+#ifdef MONGOC_APPLE_NATIVE_TLS
+   sopt.pkcs12_file = PKCS12FILE_NOPASS;
+   sopt.pkcs12_pwd = PASSWORD;
+#else
    sopt.pem_file = PEMFILE_NOPASS;
+#endif
    sopt.ca_file = CAFILE;
 
    copt.ca_file = CAFILE;
@@ -136,6 +146,7 @@ test_mongoc_tls_basic (void)
 
 #ifdef MONGOC_APPLE_NATIVE_TLS
    sopt.pkcs12_file = PKCS12FILE_NOPASS;
+   sopt.pkcs12_pwd = PASSWORD;
 #else
    sopt.pem_file = PEMFILE_NOPASS;
 #endif
@@ -259,12 +270,12 @@ test_stream_tls_install (TestSuite *suite)
 {
 //   TestSuite_Add (suite, "/TLS/altname", test_mongoc_tls_altname);
 //   TestSuite_Add (suite, "/TLS/bad_password", test_mongoc_tls_bad_password);
-//   TestSuite_Add (suite, "/TLS/bad_verify", test_mongoc_tls_bad_verify);
+   TestSuite_Add (suite, "/TLS/bad_verify", test_mongoc_tls_bad_verify);
    TestSuite_Add (suite, "/TLS/basic", test_mongoc_tls_basic);
 //   TestSuite_Add (suite, "/TLS/crl", test_mongoc_tls_crl);
 //   TestSuite_Add (suite, "/TLS/ip", test_mongoc_tls_ip);
    TestSuite_Add (suite, "/TLS/no_certs", test_mongoc_tls_no_certs);
-//   TestSuite_Add (suite, "/TLS/no_verify", test_mongoc_tls_no_verify);
+   TestSuite_Add (suite, "/TLS/no_verify", test_mongoc_tls_no_verify);
    TestSuite_Add (suite, "/TLS/password", test_mongoc_tls_password);
 #ifndef _WIN32
 //   TestSuite_Add (suite, "/TLS/trust_dir", test_mongoc_tls_trust_dir);
