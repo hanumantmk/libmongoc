@@ -269,8 +269,6 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
   fprintf(stderr, "status: %d\n", status);
   if (status == noErr) {
       SecCertificateRef cert = NULL;
-      CFTypeRef certs_c[1];
-      CFArrayRef certs = NULL;
 
       /* If we found one, print it out: */
       status = SecIdentityCopyCertificate(ssl->cert_and_key, &cert);
@@ -291,17 +289,6 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
           CFRelease(cert_summary);
           CFRelease(cert);
         }
-      }
-      certs_c[0] = ssl->cert_and_key;
-      certs = CFArrayCreate(NULL, (const void **)certs_c, 1L,
-                            &kCFTypeArrayCallBacks);
-      status = SSLSetCertificate(ssl->context, certs);
-      if(certs)
-        CFRelease(certs);
-
-      if(status != noErr) {
-//        failf(data, "SSL: SSLSetCertificate() failed: OSStatus %d", err);
-        return false;
       }
 
       fprintf(stderr, "got to %d\n", __LINE__);
@@ -404,19 +391,27 @@ _mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_c
     } else {
        out->context = SSLCreateContext(NULL, kSSLServerSide, kSSLStreamType);
     }
-//   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
-//   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
+   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
+   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
 //   SSLSetEnableCertVerify(out->context, ! opt->weak_cert_validation);
-
-   fprintf(stderr, "setting weak cert validation: isclient(%d), weak_cert(%d)\n", is_client, opt->weak_cert_validation);
 
    if (opt->pkcs12_file) {
        _mongoc_ssl_apple_load_pkcs12(out, opt->pkcs12_file, opt->pkcs12_pwd);
+
+       fprintf(stderr, "got here... %d\n", __LINE__);
+       CFArrayAppendValue(out->anchor_certs, out->cert_and_key);
+       fprintf(stderr, "got here... %d\n", __LINE__);
    }
 
    if (opt->ca_file) {
+   fprintf(stderr, "got here... %d\n", __LINE__);
        _mongoc_ssl_apple_load_cert (out, opt->ca_file);
+   fprintf(stderr, "got here... %d\n", __LINE__);
    }
+
+   fprintf(stderr, "got here... %d\n", __LINE__);
+   SSLSetCertificate(out->context, out->anchor_certs);
+   fprintf(stderr, "got here... %d\n", __LINE__);
 }
 
 void

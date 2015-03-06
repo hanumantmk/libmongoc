@@ -57,6 +57,7 @@ test_mongoc_tls_password (void)
 
    sopt.ca_file = CAFILE;
    copt.ca_file = CAFILE;
+//   copt.ca_file = TRUST_DIR "/verify/pass.mongodb.com.pem";
 
    ssl_test (&copt, &sopt, "pass.mongodb.com", &cr, &sr);
 
