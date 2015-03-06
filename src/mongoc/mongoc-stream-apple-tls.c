@@ -212,8 +212,16 @@ _mongoc_stream_apple_tls_writev (mongoc_stream_t *stream,
                           iov[i].iov_len - iov_pos,
                           (size_t *)&write_ret);
 
-         if (noErr != error) {
-            return -1;
+         switch (error) {
+            case errSSLWouldBlock:
+            case noErr:
+               break;
+
+            case errSSLClosedAbort:
+               errno = ECONNRESET;
+
+            default:
+               return -1;
          }
 
          if (expire) {
@@ -293,13 +301,23 @@ _mongoc_stream_apple_tls_readv (mongoc_stream_t *stream,
       iov_pos = 0;
 
       while (iov_pos < iov[i].iov_len) {
+         read_ret = 0;
 
          error = SSLRead(tls->ssl.context,
                          iov[i].iov_base + iov_pos,
                          iov[i].iov_len - iov_pos,
                          (size_t *)&read_ret);
-         if (noErr != error) {
-            return -1;
+
+         switch (error) {
+            case errSSLWouldBlock:
+            case noErr:
+               break;
+
+            case errSSLClosedAbort:
+               errno = ECONNRESET;
+
+            default:
+               return -1;
          }
 
          if (expire) {
@@ -399,10 +417,6 @@ mongoc_stream_apple_tls_do_handshake (mongoc_stream_t *stream,
    error = SSLHandshake(tls->ssl.context);
    if (noErr == error) {
       return true;
-   } else if (-9841 == error) {
-      return true;
-   } else {
-       fprintf(stderr, "err: %d\n", error);
    }
 
    if (!errno) {
@@ -439,6 +453,9 @@ static CFStringRef CopyCertSubject(SecCertificateRef cert)
 #endif
   return server_cert_summary;
 }
+
+
+
 /*
  *--------------------------------------------------------------------------
  *
@@ -455,40 +472,28 @@ mongoc_stream_apple_tls_check_cert (mongoc_stream_t *stream,
     mongoc_stream_apple_tls_t *tls = (mongoc_stream_apple_tls_t *)stream;
     SecTrustRef trust;
 
+    if (tls->weak_cert_validation) {
+       return true;
+    }
+
     CFStringRef host = CFStringCreateWithCString(NULL, chost, kCFStringEncodingUTF8);
 
     SecPolicyRef policy_ref = SecPolicyCreateSSL(true, host);
-    fprintf(stderr, "chost: %s\n", chost);
 
     OSStatus ret = SSLCopyPeerTrust(tls->ssl.context, &trust);
     if(trust == NULL) {
-//        failf(data, "SSL: error getting certificate chain");
+       MONGOC_ERROR("SSL: error getting certificate chain");
         return false;
     }
     else if(ret != noErr) {
-        //return sslerr_to_curlerr(data, ret);
+       MONGOC_ERROR("SSL: error OSStatus: (%d).", ret);
         return false;
     }
 
-    fprintf(stderr, "check cert: %d\n", __LINE__);
     ret = SecTrustSetPolicies(trust, policy_ref);
     if(ret != noErr) {
         return false;
     }
-    fprintf(stderr, "check cert: %d\n", __LINE__);
-
-    ret = SecTrustSetAnchorCertificates(trust, tls->ssl.anchor_certs);
-    if(ret != noErr) {
-        //return sslerr_to_curlerr(data, ret);
-        return false;
-    }
-    fprintf(stderr, "check cert: %d\n", __LINE__);
-    ret = SecTrustSetAnchorCertificatesOnly(trust, true);
-    if(ret != noErr) {
-        //return sslerr_to_curlerr(data, ret);
-        return false;
-    }
-    fprintf(stderr, "check cert: %d\n", __LINE__);
 
   if(ret == noErr && trust) {
     CFIndex count = SecTrustGetCertificateCount(trust);
@@ -504,25 +509,7 @@ mongoc_stream_apple_tls_check_cert (mongoc_stream_t *stream,
                             server_cert_summary_c,
                             128,
                             kCFStringEncodingUTF8)) {
-        fprintf(stderr, "toquery: %s\n", server_cert_summary_c);
-      }
-      CFRelease(server_cert_summary);
-    }
-
-    count = CFArrayGetCount(tls->ssl.anchor_certs);
-
-    for(i = 0L ; i < count ; i++) {
-  SecCertificateRef server_cert;
-  CFStringRef server_cert_summary;
-  char server_cert_summary_c[128];
-      server_cert = CFArrayGetValueAtIndex(tls->ssl.anchor_certs, i);
-      server_cert_summary = CopyCertSubject(server_cert);
-      memset(server_cert_summary_c, 0, 128);
-      if(CFStringGetCString(server_cert_summary,
-                            server_cert_summary_c,
-                            128,
-                            kCFStringEncodingUTF8)) {
-        fprintf(stderr, "anchor certificate: %s\n", server_cert_summary_c);
+         MONGOC_INFO("Server certificate: %s.", server_cert_summary_c);
       }
       CFRelease(server_cert_summary);
     }
@@ -531,33 +518,20 @@ mongoc_stream_apple_tls_check_cert (mongoc_stream_t *stream,
     SecTrustResultType trust_eval = 0;
     ret = SecTrustEvaluate(trust, &trust_eval);
     CFRelease(trust);
-    fprintf(stderr, "check cert: %d\n", __LINE__);
     if(ret != noErr) {
-        //return sslerr_to_curlerr(data, ret);
+       MONGOC_WARNING("SSL: error OSStatus: (%d).", ret);
         return false;
-    }
-
-    fprintf(stderr, "check cert: %d\n", __LINE__);
-    fprintf(stderr, "check cert: trust_eval: %d\n", trust_eval);
-
-    if (trust_eval == kSecTrustResultRecoverableTrustFailure) {
     }
 
     switch (trust_eval) {
         case kSecTrustResultUnspecified:
-    fprintf(stderr, "check cert: %d\n", __LINE__);
         case kSecTrustResultProceed:
-    fprintf(stderr, "check cert: %d\n", __LINE__);
             return true;
 
         case kSecTrustResultRecoverableTrustFailure:
-    fprintf(stderr, "check cert: %d\n", __LINE__);
         case kSecTrustResultDeny:
-    fprintf(stderr, "check cert: %d\n", __LINE__);
         default:
-    fprintf(stderr, "check cert: %d\n", __LINE__);
-//            failf(data, "SSL: certificate verification failed (result: %d)",
-//                    trust_eval);
+             MONGOC_WARNING("SSL: certificate verification failed (result: %d)", trust_eval);
             return false;
     }
 }
@@ -575,18 +549,33 @@ _mongoc_stream_apple_tls_ssl_read (SSLConnectionRef connection,
                                    void *data,
                                    size_t *data_length)
 {
-   // TODO this should sometimes return errors I think...
    mongoc_stream_apple_tls_t *tls = (mongoc_stream_apple_tls_t *)connection;
-   mongoc_iovec_t iov;
    ssize_t read_length;
 
-   iov.iov_base = data;
-   iov.iov_len = *data_length;
-   read_length = mongoc_stream_readv(tls->base_stream, &iov, 1,
-                                     *data_length, tls->timeout_msec);
-   fprintf(stderr, "log: %s:%d - %ld\n", __FILE__, __LINE__, read_length);
+   errno = 0;
+   read_length = mongoc_stream_read(tls->base_stream, data, *data_length, 0, tls->timeout_msec);
+
+   if (read_length == 0) {
+      return errSSLClosedGraceful;
+   } else if (read_length < 0) {
+      switch (errno) {
+         case ENOENT:
+            return errSSLClosedGraceful;
+            break;
+         case ECONNRESET:
+            return errSSLClosedAbort;
+            break;
+         case EAGAIN:
+            return errSSLWouldBlock;
+            break;
+         default:
+            return -36; /* ioErr */
+            break;
+      }
+   }
 
    *data_length = read_length;
+
    return noErr;
 }
 
@@ -603,17 +592,26 @@ _mongoc_stream_apple_tls_ssl_write (SSLConnectionRef connection,
                                     const void *data,
                                     size_t *data_length)
 {
-   // TODO this should sometimes return errors I think...
    mongoc_stream_apple_tls_t *tls = (mongoc_stream_apple_tls_t *)connection;
-   mongoc_iovec_t iov;
+
    ssize_t write_length;
 
-   iov.iov_base = (char *)data;
-   iov.iov_len = *data_length;
-   write_length = mongoc_stream_writev(tls->base_stream, &iov, 1,
-                                       tls->timeout_msec);
-   fprintf(stderr, "log: %s:%d - %ld\n", __FILE__, __LINE__, write_length);
+   errno = 0;
+   write_length = mongoc_stream_write(tls->base_stream, (void *)data, *data_length, tls->timeout_msec);
+
+   if (write_length < 0) {
+      switch (errno) {
+         case EAGAIN:
+            return errSSLWouldBlock;
+            break;
+         default:
+            return -36; /* ioErr */
+            break;
+      }
+   }
+
    *data_length = write_length;
+
    return noErr;
 }
 
@@ -700,7 +698,11 @@ mongoc_stream_apple_tls_new (mongoc_stream_t  *base_stream,
    tls->weak_cert_validation = opt->weak_cert_validation;
    tls->timeout_msec = -1;
 
-   _mongoc_ssl_apple_new(opt, &tls->ssl, client);
+   if (! _mongoc_ssl_apple_new(opt, &tls->ssl, client)) {
+      bson_free(tls);
+
+      return NULL;
+   }
 
    /* custom SSL read/write functions */
    SSLSetIOFuncs(tls->ssl.context,
@@ -708,7 +710,6 @@ mongoc_stream_apple_tls_new (mongoc_stream_t  *base_stream,
                  _mongoc_stream_apple_tls_ssl_write);
 
    SSLSetConnection(tls->ssl.context, tls);
-//   SSLSetPeerDomainName(tls->ssl.context, "padd.mongodb.com", strlen("pass.mongodb.com"));
 
    mongoc_counter_streams_active_inc();
 

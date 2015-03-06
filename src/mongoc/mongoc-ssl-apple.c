@@ -25,115 +25,13 @@
 
 #include "mongoc-b64-private.h"
 #include "mongoc-ssl-apple-private.h"
+#include "mongoc-log.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <sys/mman.h>
 #include <Security/SecureTransport.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <TargetConditionals.h>
-
-static int read_cert(const char *file, unsigned char **out, size_t *outlen)
-{
-    int fd;
-    ssize_t n, len = 0, cap = 512;
-    unsigned char buf[cap], *data;
-
-    fd = open(file, 0);
-    if(fd < 0)
-        return -1;
-
-    data = bson_malloc(cap);
-    if(!data) {
-        close(fd);
-        return -1;
-    }
-
-    for(;;) {
-        n = read(fd, buf, sizeof(buf));
-        if(n < 0) {
-            close(fd);
-            bson_free(data);
-            return -1;
-        }
-        else if(n == 0) {
-            close(fd);
-            break;
-        }
-
-        if(len + n >= cap) {
-            cap *= 2;
-            data = bson_realloc(data, cap);
-            if(!data) {
-                close(fd);
-                return -1;
-            }
-        }
-
-        memcpy(data + len, buf, n);
-        len += n;
-    }
-    data[len] = '\0';
-
-    *out = data;
-    *outlen = len;
-
-    return 0;
-}
-
-
-static long pem_to_der(const char *in, unsigned char **out, size_t *outlen)
-{
-  char *sep_start, *sep_end, *cert_start, *cert_end;
-  size_t i, j, err;
-  size_t len;
-  int rval;
-  unsigned char *b64;
-
-  /* Jump through the separators at the beginning of the certificate. */
-  sep_start = strstr(in, "-----");
-  if(sep_start == NULL)
-    return 0;
-  cert_start = strstr(sep_start + 1, "-----");
-  if(cert_start == NULL)
-    return -1;
-
-  cert_start += 5;
-
-  /* Find separator after the end of the certificate. */
-  cert_end = strstr(cert_start, "-----");
-  if(cert_end == NULL)
-    return -1;
-
-  sep_end = strstr(cert_end + 1, "-----");
-  if(sep_end == NULL)
-    return -1;
-  sep_end += 5;
-
-  len = cert_end - cert_start;
-  b64 = bson_malloc(len + 1);
-
-  /* Create base64 string without linefeeds. */
-  for(i = 0, j = 0; i < len; i++) {
-    if(cert_start[i] != '\r' && cert_start[i] != '\n')
-      b64[j++] = cert_start[i];
-  }
-  b64[j] = '\0';
-
-  rval = mongoc_b64_pton((char *)b64, NULL, 0);
-
-  if (rval < 0) {
-      return -1;
-  }
-
-  *outlen = rval;
-  *out = bson_malloc(*outlen);
-
-  mongoc_b64_pton((char *)b64, *out, *outlen);
-
-  bson_free(b64);
-
-  return sep_end - in;
-}
 
 
 static CFStringRef CopyCertSubject(SecCertificateRef cert)
@@ -162,119 +60,57 @@ static CFStringRef CopyCertSubject(SecCertificateRef cert)
 #endif
   return server_cert_summary;
 }
-static bool append_cert_to_array(unsigned char *buf, size_t buflen,
-                                CFMutableArrayRef array)
+
+static bool _mongoc_ssl_apple_load_identity(mongoc_ssl_apple_t *ssl, const char *label)
 {
-    char subject_cbuf[128];
-    CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, buf, buflen);
-
-    if(!certdata) {
-//      failf(data, "SSL: failed to allocate array for CA certificate");
-      return false;
-    }
-
-    SecCertificateRef cacert =
-      SecCertificateCreateWithData(kCFAllocatorDefault, certdata);
-    CFRelease(certdata);
-    if(!cacert) {
- //     failf(data, "SSL: failed to create SecCertificate from CA certificate");
-      return false;
-    }
-
-    /* Check if cacert is valid. */
-    CFStringRef subject = CopyCertSubject(cacert);
-    if(subject) {
-      memset(subject_cbuf, 0, 128);
-      if(!CFStringGetCString(subject,
-                            subject_cbuf,
-                            128,
-                            kCFStringEncodingUTF8)) {
-        CFRelease(cacert);
-//        failf(data, "SSL: invalid CA certificate subject");
-          return false;
-      }
-      CFRelease(subject);
-    }
-    else {
-      CFRelease(cacert);
-//      failf(data, "SSL: invalid CA certificate");
-      return false;
-    }
-
-    CFArrayAppendValue(array, cacert);
-    CFRelease(cacert);
-
-    return true;
-}
-
-
-bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, const char *cPassword)
-{
-      fprintf(stderr, "cpath: %s, cpassword: %s\n", cPath, cPassword);
-  
+  SecIdentityRef cert_and_key = NULL;
   OSStatus status = errSecItemNotFound;
-  CFURLRef pkcs_url = CFURLCreateFromFileSystemRepresentation(NULL,
-    (const UInt8 *)cPath, strlen(cPath), false);
-  CFStringRef password = cPassword ? CFStringCreateWithCString(NULL,
-    cPassword, kCFStringEncodingUTF8) : NULL;
-  CFDataRef pkcs_data = NULL;
-  fprintf(stderr, "loading: %s %s\n", cPath, cPassword);
-      fprintf(stderr, "got to %d\n", __LINE__);
 
-  /* We can import P12 files on iOS or OS X 10.7 or later: */
-  /* These constants are documented as having first appeared in 10.6 but they
-     raise linker errors when used on that cat for some reason. */
-#if 1
-  if(CFURLCreateDataAndPropertiesFromResource(NULL, pkcs_url, &pkcs_data,
-    NULL, NULL, &status)) {
-      fprintf(stderr, "got to %d\n", __LINE__);
-    const void *cKeys[] = {kSecImportExportPassphrase};
-    const void *cValues[] = {password};
-    CFDictionaryRef options = CFDictionaryCreate(NULL, cKeys, cValues,
-      password ? 1L : 0L, NULL, NULL);
-      fprintf(stderr, "got to %d\n", __LINE__);
-    CFArrayRef items = NULL;
+  /* SecItemCopyMatching() was introduced in iOS and Snow Leopard.
+     kSecClassIdentity was introduced in Lion. If both exist, let's use them
+     to find the certificate. */
+  if(SecItemCopyMatching != NULL && kSecClassIdentity != NULL) {
+    CFTypeRef keys[4];
+    CFTypeRef values[4];
+    CFDictionaryRef query_dict;
+    CFStringRef label_cf = CFStringCreateWithCString(NULL, label,
+      kCFStringEncodingUTF8);
 
-      fprintf(stderr, "got to %d\n", __LINE__);
-    /* Here we go: */
-    status = SecPKCS12Import(pkcs_data, options, &items);
-    fprintf(stderr, "status: %d\n", status);
-    if(status == noErr && items) {
-        fprintf(stderr, "status: %d, %d\n", status, CFArrayGetCount(items));
+    /* Set up our search criteria and expected results: */
+    values[0] = kSecClassIdentity; /* we want a certificate and a key */
+    keys[0] = kSecClass;
+    values[1] = kCFBooleanTrue;    /* we want a reference */
+    keys[1] = kSecReturnRef;
+    values[2] = kSecMatchLimitOne; /* one is enough, thanks */
+    keys[2] = kSecMatchLimit;
+    /* identity searches need a SecPolicyRef in order to work */
+    values[3] = SecPolicyCreateSSL(false, label_cf);
+    keys[3] = kSecMatchPolicy;
+    query_dict = CFDictionaryCreate(NULL, (const void **)keys,
+                                   (const void **)values, 4L,
+                                   &kCFCopyStringDictionaryKeyCallBacks,
+                                   &kCFTypeDictionaryValueCallBacks);
+    CFRelease(values[3]);
+    CFRelease(label_cf);
+
+    /* Do we have a match? */
+    status = SecItemCopyMatching(query_dict, (CFTypeRef*)&cert_and_key);
+    if (status) {
+       MONGOC_WARNING("Failed to locate native identity: %s\n", label);
     }
-    if(status == noErr && items && CFArrayGetCount(items)) {
-      fprintf(stderr, "got to %d\n", __LINE__);
-      CFDictionaryRef identity_and_trust = CFArrayGetValueAtIndex(items, 0L);
-      fprintf(stderr, "got to %d\n", __LINE__);
-      const void *temp_identity = CFDictionaryGetValue(identity_and_trust,
-        kSecImportItemIdentity);
-
-      /* Retain the identity; we don't care about any other data... */
-      CFRetain(temp_identity);
-      ssl->cert_and_key = (SecIdentityRef)temp_identity;
-    }
-
-    if(items)
-      CFRelease(items);
-    CFRelease(options);
-    CFRelease(pkcs_data);
+    CFRelease(query_dict);
+  } else {
+     return false;
   }
-#endif /* CURL_BUILD_MAC_10_7 || CURL_BUILD_IOS */
-      fprintf(stderr, "got to %d\n", __LINE__);
-  if(password)
-    CFRelease(password);
-  CFRelease(pkcs_url);
-      fprintf(stderr, "got to %d\n", __LINE__);
 
-  fprintf(stderr, "status: %d\n", status);
-  if (status == noErr) {
+    if(status == noErr) {
       SecCertificateRef cert = NULL;
+      CFTypeRef certs_c[1];
+      CFArrayRef certs = NULL;
 
       /* If we found one, print it out: */
-      status = SecIdentityCopyCertificate(ssl->cert_and_key, &cert);
-      fprintf(stderr, "got to %d, %d\n", __LINE__, status);
+      status = SecIdentityCopyCertificate(cert_and_key, &cert);
       if(status == noErr) {
-      fprintf(stderr, "got to %d\n", __LINE__);
         CFStringRef cert_summary = CopyCertSubject(cert);
         char cert_summary_c[128];
 
@@ -284,94 +120,31 @@ bool _mongoc_ssl_apple_load_pkcs12(mongoc_ssl_apple_t *ssl, const char *cPath, c
                                 cert_summary_c,
                                 128,
                                 kCFStringEncodingUTF8)) {
-//            infof(data, "Client certificate: %s\n", cert_summary_c);
+             MONGOC_INFO("Loaded client identity: %s.", cert_summary_c);
           }
           CFRelease(cert_summary);
           CFRelease(cert);
         }
+         certs_c[0] = cert_and_key;
+         certs = CFArrayCreate(NULL, (const void **)certs_c, 1L,
+                               &kCFTypeArrayCallBacks);
+         status = SSLSetCertificate(ssl->context, certs);
       }
 
-      fprintf(stderr, "got to %d\n", __LINE__);
-      return true;
-  } else {
-      fprintf(stderr, "got to %d\n", __LINE__);
-      return false;
-  }
-}
+      if(certs)
+        CFRelease(certs);
 
-
-static bool
-_mongoc_ssl_apple_load_cert (mongoc_ssl_apple_t *ssl, const char *cafile)
-{
-    int n = 0;
-    bool rc;
-    long res;
-    unsigned char *certbuf, *der;
-    size_t buflen, derlen, offset = 0;
-
-    BSON_ASSERT (ssl);
-    BSON_ASSERT (cafile);
-
-    if(read_cert(cafile, &certbuf, &buflen) < 0) {
-//        failf(data, "SSL: failed to read or invalid CA certificate");
+      if(status != noErr) {
+         MONGOC_WARNING("SSLSetCertificate() failed: OSStatus %d.", status);
         return false;
+      }
+      CFRelease(cert_and_key);
+
+      return true;
     }
 
-    CFMutableArrayRef array = ssl->anchor_certs;
-
-    while(offset < buflen) {
-        n++;
-
-        /*
-         * Check if the certificate is in PEM format, and convert it to DER. If
-         * this fails, we assume the certificate is in DER format.
-         */
-        res = pem_to_der((const char *)certbuf + offset, &der, &derlen);
-        if(res < 0) {
-            bson_free(certbuf);
-//            failf(data, "SSL: invalid CA certificate #%d (offset %d) in bundle",
- //                   n, offset);
-            return false;
-        }
-        offset += res;
-
-        if(res == 0) {
-            /* No more certificates in the bundle. */
-            bson_free(certbuf);
-            break;
-        }
-
-        fprintf(stderr, "loaded a cert...\n");
-        rc = append_cert_to_array(der, derlen, array);
-        free(der);
-        if(! rc) {
-            bson_free(certbuf);
-            return rc;
-        }
-    }
-
-    return true;
+    return false;
 }
-
-
-/*
- *-------------------------------------------------------------------------
- *
- * _mongoc_ssl_apple_extract_subject --
- *
- *       Extract human-readable subject information from the certificate
- *       in @filename.
- *
- *       Depending on the OS version, we try several different ways of
- *       accessing this data, and the string returned may be a summary
- *       of the certificate, a long description of the certificate, or
- *       just the common name from the cert.
- *
- * Returns:
- *       Certificate data, or NULL if filename could not be processed.
- *
- *-------------------------------------------------------------------------
- */
 
 char *
 _mongoc_ssl_apple_extract_subject (const char *filename)
@@ -379,39 +152,26 @@ _mongoc_ssl_apple_extract_subject (const char *filename)
     return NULL;
 }
 
-void
+bool
 _mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_client)
 {
    memset(out, 0, sizeof (*out));
-
-   out->anchor_certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
    if (is_client) {
        out->context = SSLCreateContext(NULL, kSSLClientSide, kSSLStreamType);
     } else {
        out->context = SSLCreateContext(NULL, kSSLServerSide, kSSLStreamType);
     }
-   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnClientAuth, true);
-   SSLSetSessionOption(out->context, kSSLSessionOptionBreakOnServerAuth, true);
-//   SSLSetEnableCertVerify(out->context, ! opt->weak_cert_validation);
 
-   if (opt->pkcs12_file) {
-       _mongoc_ssl_apple_load_pkcs12(out, opt->pkcs12_file, opt->pkcs12_pwd);
+   if (opt->native_identity) {
+       if (! _mongoc_ssl_apple_load_identity(out, opt->native_identity)) {
+          CFRelease(out->context);
 
-       fprintf(stderr, "got here... %d\n", __LINE__);
-       CFArrayAppendValue(out->anchor_certs, out->cert_and_key);
-       fprintf(stderr, "got here... %d\n", __LINE__);
+          return false;
+       }
    }
 
-   if (opt->ca_file) {
-   fprintf(stderr, "got here... %d\n", __LINE__);
-       _mongoc_ssl_apple_load_cert (out, opt->ca_file);
-   fprintf(stderr, "got here... %d\n", __LINE__);
-   }
-
-   fprintf(stderr, "got here... %d\n", __LINE__);
-   SSLSetCertificate(out->context, out->anchor_certs);
-   fprintf(stderr, "got here... %d\n", __LINE__);
+   return true;
 }
 
 void
@@ -434,7 +194,6 @@ void
 _mongoc_ssl_apple_init (void)
 {
    /* no-op */
-   // TODO why is this a no-op?
 }
 
 /*
@@ -451,7 +210,6 @@ void
 _mongoc_ssl_apple_cleanup (void)
 {
    /* no-op */
-   // TODO why is this a no-op?
 }
 
 

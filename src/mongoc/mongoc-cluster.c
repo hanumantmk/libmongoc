@@ -1682,6 +1682,13 @@ _mongoc_cluster_auth_node_x509 (mongoc_cluster_t      *cluster,
       if (cluster->client->pem_subject) {
          username = cluster->client->pem_subject;
          MONGOC_INFO ("X509: got username (%s) from certificate", username);
+      } else {
+         bson_set_error (error,
+               MONGOC_ERROR_CLIENT,
+               MONGOC_ERROR_CLIENT_AUTHENTICATE,
+               "cannot determine username "
+               "please set it as part of the connection string.");
+         return false;
       }
    }
 

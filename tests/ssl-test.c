@@ -116,9 +116,7 @@ ssl_test_server (void * ptr)
    }
    assert(ssl_stream);
 
-   fprintf(stderr, "got to %s:%d\n", __FILE__, __LINE__);
    r = mongoc_stream_tls_do_handshake (ssl_stream, TIMEOUT);
-   fprintf(stderr, "got to %s:%d - %ldd\n", __FILE__, __LINE__, r);
    if (!r) {
       unsigned long err = ssl_test_get_error();
       assert(err);
@@ -133,10 +131,11 @@ ssl_test_server (void * ptr)
    }
 
    r = mongoc_stream_readv(ssl_stream, &iov, 1, 4, TIMEOUT);
-   fprintf(stderr, "got to %s:%d - %ldd\n", __FILE__, __LINE__, r);
    if (r < 0) {
 #ifdef _WIN32
       assert(errno == WSAETIMEDOUT);
+#elif defined MONGOC_APPLE_NATIVE_TLS
+      assert(errno == ECONNRESET);
 #else
       assert(errno == ETIMEDOUT);
 #endif
@@ -154,7 +153,6 @@ ssl_test_server (void * ptr)
    memcpy(&len, iov.iov_base, r);
 
    r = mongoc_stream_readv(ssl_stream, &iov, 1, len, TIMEOUT);
-   fprintf(stderr, "got to %s:%d - %ldd\n", __FILE__, __LINE__, r);
    assert(r == len);
 
    iov.iov_len = r;
@@ -232,9 +230,7 @@ ssl_test_client (void * ptr)
    assert(ssl_stream);
 
    errno = 0;
-   fprintf(stderr, "got to %s:%d\n", __FILE__, __LINE__);
    r = mongoc_stream_tls_do_handshake (ssl_stream, TIMEOUT);
-   fprintf(stderr, "got to %s:%d - %ldd\n", __FILE__, __LINE__, r);
    errno_captured = errno;
 
    if (! r) {
@@ -254,7 +250,6 @@ ssl_test_client (void * ptr)
    }
 
    r = mongoc_stream_tls_check_cert (ssl_stream, data->host);
-   fprintf(stderr, "got to %s:%d - %ldd\n", __FILE__, __LINE__, r);
    if (! r) {
       data->client_result->result = SSL_TEST_SSL_VERIFY;
 
