@@ -34,19 +34,17 @@
 
 BSON_BEGIN_DECLS
 
-typedef struct
-{
-    SSLContextRef     context;
-} mongoc_ssl_apple_t;
-
-bool
-_mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, mongoc_ssl_apple_t *out, bool is_client);
+SSLContextRef
+_mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, bool is_client);
 
 void
-_mongoc_ssl_apple_destroy (mongoc_ssl_apple_t *out);
+_mongoc_ssl_apple_destroy (SSLContextRef ssl);
 
 char    *
 _mongoc_ssl_apple_extract_subject (const char *filename);
+
+CFStringRef
+_mongoc_ssl_apple_copy_cert_subject (SecCertificateRef cert);
 
 void
 _mongoc_ssl_apple_init (void);
