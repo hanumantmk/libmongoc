@@ -40,11 +40,13 @@ _mongoc_ssl_apple_new (mongoc_ssl_opt_t *opt, bool is_client);
 void
 _mongoc_ssl_apple_destroy (SSLContextRef ssl);
 
-char    *
+char *
 _mongoc_ssl_apple_extract_subject (const char *filename);
 
-CFStringRef
-_mongoc_ssl_apple_copy_cert_subject (SecCertificateRef cert);
+bool
+_mongoc_ssl_apple_check_cert (SSLContextRef ssl,
+                              const char   *chost,
+                              bool          weak_cert_validation);
 
 void
 _mongoc_ssl_apple_init (void);

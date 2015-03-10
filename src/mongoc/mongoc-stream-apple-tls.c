@@ -442,91 +442,9 @@ mongoc_stream_apple_tls_check_cert (mongoc_stream_t *stream,
                                     const char      *chost)
 {
    mongoc_stream_apple_tls_t *tls = (mongoc_stream_apple_tls_t *)stream;
-   SecTrustRef trust = NULL;
-   CFStringRef host = NULL;
-   SecPolicyRef policy_ref = NULL;
-   OSStatus ret;
-   bool rval = false;
-   CFIndex count;
-   CFIndex i;
-   SecTrustResultType trust_eval = 0;
 
-   if (tls->weak_cert_validation) {
-      rval = true;
-      goto CLEANUP;
-   }
-
-   ret = SSLCopyPeerTrust (tls->ssl, &trust);
-
-   if (trust == NULL) {
-      MONGOC_ERROR ("SSL: error getting certificate chain");
-
-      goto CLEANUP;
-   } else if (ret != noErr) {
-      MONGOC_ERROR ("SSL: error OSStatus: (%d).", ret);
-
-      goto CLEANUP;
-   }
-
-   host = CFStringCreateWithCString (NULL, chost, kCFStringEncodingUTF8);
-   policy_ref = SecPolicyCreateSSL (true, host);
-   ret = SecTrustSetPolicies (trust, policy_ref);
-
-   if (ret != noErr) {
-      goto CLEANUP;
-
-      return false;
-   }
-
-   count = SecTrustGetCertificateCount (trust);
-
-   for (i = 0L; i < count; i++) {
-      SecCertificateRef server_cert;
-      CFStringRef server_cert_summary;
-      char server_cert_summary_c[128];
-
-      server_cert = SecTrustGetCertificateAtIndex (trust, i);
-      server_cert_summary = _mongoc_ssl_apple_copy_cert_subject (server_cert);
-      memset (server_cert_summary_c, 0, sizeof(server_cert_summary_c));
-
-      if (CFStringGetCString (server_cert_summary,
-                              server_cert_summary_c,
-                              sizeof(server_cert_summary_c),
-                              kCFStringEncodingUTF8)) {
-         MONGOC_INFO ("Server certificate: %s.", server_cert_summary_c);
-      }
-
-      CFRelease (server_cert_summary);
-   }
-
-   ret = SecTrustEvaluate (trust, &trust_eval);
-
-   if (ret != noErr) {
-      MONGOC_WARNING ("SSL: error OSStatus: (%d).", ret);
-      goto CLEANUP;
-   }
-
-   switch (trust_eval) {
-   case kSecTrustResultUnspecified:
-   case kSecTrustResultProceed:
-      rval = true;
-      break;
-
-   case kSecTrustResultRecoverableTrustFailure:
-   case kSecTrustResultDeny:
-   default:
-      MONGOC_INFO ("SSL: certificate verification failed (result: %d)",
-                      trust_eval);
-      break;
-   }
-
-CLEANUP:
-
-   if (trust) CFRelease (trust);
-   if (host) CFRelease (host);
-   if (policy_ref) CFRelease (policy_ref);
-
-   return rval;
+   return _mongoc_ssl_apple_check_cert (tls->ssl, chost,
+                                        tls->weak_cert_validation);
 }
 
 /*
