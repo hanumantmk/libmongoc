@@ -10,6 +10,7 @@
 #include "test-libmongoc.h"
 
 static char *gTestUri;
+static char *gTestUriAuth;
 
 #undef MONGOC_LOG_DOMAIN
 #define MONGOC_LOG_DOMAIN "topology-test"
@@ -239,7 +240,7 @@ test_max_wire_version_race_condition (void)
    mongoc_client_destroy (client);
 
    /* use client pool, test is only valid when multi-threaded */
-   uri = mongoc_uri_new ("mongodb://pink:panther@localhost:27017/test");
+   uri = mongoc_uri_new (gTestUriAuth);
    pool = mongoc_client_pool_new (uri);
    client = mongoc_client_pool_pop (pool);
 
@@ -267,12 +268,14 @@ static void
 cleanup_globals (void)
 {
    bson_free(gTestUri);
+   bson_free(gTestUriAuth);
 }
 
 void
 test_topology_install (TestSuite *suite)
 {
    gTestUri = bson_strdup_printf("mongodb://%s/", MONGOC_TEST_HOST);
+   gTestUriAuth = bson_strdup_printf("mongodb://pink:panther@%s/test", MONGOC_TEST_HOST);
 
    TestSuite_Add (suite, "/Topology/client_creation", test_topology_client_creation);
    TestSuite_Add (suite, "/Topology/client_pool_creation", test_topology_client_pool_creation);
