@@ -189,7 +189,7 @@ test_invalid_cluster_node (void)
    client = mongoc_client_pool_pop (pool);
    cluster = &client->cluster;
 
-   usleep(100);
+   usleep(100000);
 
    /* load stream into cluster */
    id = mongoc_cluster_preselect (cluster, MONGOC_OPCODE_QUERY, NULL, &error);
@@ -201,7 +201,7 @@ test_invalid_cluster_node (void)
    assert (cluster_node->timestamp > scanner_node->timestamp);
 
    /* update the scanner node's timestamp */
-   usleep(100);
+   usleep(100000);
    scanner_node->timestamp = bson_get_monotonic_time ();
    assert (cluster_node->timestamp < scanner_node->timestamp);
 
