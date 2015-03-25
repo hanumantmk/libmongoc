@@ -206,8 +206,8 @@ collect_tests_from_dir (char (*paths)[MAX_NAME_LENGTH] /* OUT */,
       closedir(dir);
    }
    return paths_index;
-}
 #endif
+}
 
 /*
  *-----------------------------------------------------------------------
