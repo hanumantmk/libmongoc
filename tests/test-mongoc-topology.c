@@ -204,6 +204,7 @@ test_invalid_cluster_node (void)
    usleep(100000);
    scanner_node->timestamp = bson_get_monotonic_time ();
    assert (cluster_node->timestamp < scanner_node->timestamp);
+   usleep(100000);
 
    /* ensure that cluster adjusts */
    mongoc_cluster_fetch_stream (cluster, id, &error);
