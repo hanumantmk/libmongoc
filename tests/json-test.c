@@ -141,7 +141,7 @@ collect_tests_from_dir (char (*paths)[MAX_NAME_LENGTH] /* OUT */,
 
    char child_path[MAX_NAME_LENGTH];
 
-   handle = _findfirst(NULL, &info);
+   handle = _findfirst(dir_path, &info);
 
    if (handle == -1) {
       return 0;
