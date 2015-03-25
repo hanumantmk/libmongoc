@@ -699,7 +699,7 @@ test_client_install (TestSuite *suite)
 
    local = !getenv ("MONGOC_DISABLE_MOCK_SERVER");
 
-   if (!local) {
+   if (local) {
       TestSuite_Add (suite, "/Client/wire_version", test_wire_version);
       TestSuite_Add (suite, "/Client/read_prefs", test_mongoc_client_read_prefs);
    }
