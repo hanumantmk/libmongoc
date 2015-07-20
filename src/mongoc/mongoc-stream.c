@@ -295,3 +295,30 @@ mongoc_stream_check_closed (mongoc_stream_t *stream)
 
    RETURN (ret);
 }
+
+bool
+_mongoc_stream_writev_full (mongoc_stream_t *stream,
+                            mongoc_iovec_t  *iov,
+                            size_t           iovcnt,
+                            int32_t          timeout_msec)
+{
+   size_t total_bytes = 0;
+   int i;
+   ssize_t r;
+
+   for (i = 0; i < iovcnt; i++) {
+      total_bytes += iov->iov_len;
+   }
+
+   r = mongoc_stream_writev(stream, iov, iovcnt, timeout_msec);
+
+   if (r < 0) {
+      return false;
+   }
+
+   if (r != total_bytes) {
+      return false;
+   }
+
+   return true;
+}

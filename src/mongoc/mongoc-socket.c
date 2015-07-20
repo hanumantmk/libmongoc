@@ -913,7 +913,7 @@ _mongoc_socket_try_sendv (mongoc_socket_t *sock,   /* IN */
 #else
    if ((ret == -1) && (errno == EMSGSIZE)) {
 #endif
-      _mongoc_socket_try_sendv_slow (sock, iov, iovcnt);
+      RETURN (_mongoc_socket_try_sendv_slow (sock, iov, iovcnt));
    }
 
    _mongoc_socket_capture_errno (sock);
@@ -971,7 +971,7 @@ mongoc_socket_sendv (mongoc_socket_t  *sock,      /* IN */
        */
       if (sent == -1) {
          if (!_mongoc_socket_errno_is_again (sock)) {
-            RETURN (ret ? ret : -1);
+            RETURN (-1);
          }
       }
 
@@ -1007,26 +1007,14 @@ mongoc_socket_sendv (mongoc_socket_t  *sock,      /* IN */
          BSON_ASSERT (iovcnt - cur);
          BSON_ASSERT (iov [cur].iov_len);
       } else if (OPERATION_EXPIRED (expire_at)) {
-#ifdef _WIN32
-         errno = WSAETIMEDOUT;
-#else
-         errno = ETIMEDOUT;
-#endif
-         RETURN (ret ? ret : -1);
+         RETURN (ret);
       }
 
       /*
        * Block on poll() until our desired condition is met.
        */
       if (!_mongoc_socket_wait (sock->sd, POLLOUT, expire_at)) {
-         if (ret == 0){
-#ifdef _WIN32
-            errno = WSAETIMEDOUT;
-#else
-            errno = ETIMEDOUT;
-#endif
-         }
-         RETURN (ret  ? ret : -1);
+         RETURN (ret);
       }
    }
 
